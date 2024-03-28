@@ -1,0 +1,7 @@
+# Output file
+a.out
+
+# Emacs autosave files
+*~
+\#*\#
+
