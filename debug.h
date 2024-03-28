@@ -18,7 +18,7 @@
  * When compiling for production, do not compile with the debug flag,
  * or else the console output will be unnecessarily cluttered.
  */
-void debug_printf(const char *format, ...) {
+static inline void debug_printf(const char *format, ...) {
     va_list args;
     va_start(args, format);
     printf("\x1B[36m");
@@ -29,7 +29,7 @@ void debug_printf(const char *format, ...) {
 
 #define DEBUG_PRINTF(...) debug_printf(__VA_ARGS__)
 
-void debug_print_start_message() {
+static inline void debug_print_start_message() {
     debug_printf("EECS Assignment 2 Debug Mode\n");
     debug_printf("============================\n");
     debug_printf("\n");
@@ -41,14 +41,14 @@ void debug_print_start_message() {
 
 #define DEBUG_PRINT_START_MESSAGE() debug_print_start_message()
 
-void debug_message(const char *message) {
+static inline void debug_message(const char *message) {
     debug_printf("%s", message);
     debug_printf("\n");
 }
 
 #define DEBUG_MESSAGE(message) debug_message(message);
 
-void debug_print_alarm_request_without_newline(alarm_request_t *alarm_request) {
+static inline void debug_print_alarm_request_without_newline(alarm_request_t *alarm_request) {
     debug_printf(
         "{id: %d, type: %d, time: %d, message: %s, "
         "creation_time: %ld, next: %p}",
@@ -61,14 +61,14 @@ void debug_print_alarm_request_without_newline(alarm_request_t *alarm_request) {
     );
 }
 
-void debug_print_alarm_request(alarm_request_t *alarm_request) {
+static inline void debug_print_alarm_request(alarm_request_t *alarm_request) {
     debug_print_alarm_request_without_newline(alarm_request);
     debug_printf("\n");
 }
 
 #define DEBUG_PRINT_ALARM_REQUEST(alarm_request) debug_print_alarm_request(alarm_request)
 
-void debug_print_alarm_list(alarm_request_t *alarm_list_header) {
+static inline void debug_print_alarm_list(alarm_request_t *alarm_list_header) {
     alarm_request_t *alarm_request = alarm_list_header;
     debug_printf("[");
     while (alarm_request != NULL) {
