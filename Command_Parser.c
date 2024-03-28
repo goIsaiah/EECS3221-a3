@@ -2,6 +2,8 @@
 #include "types.h"
 #include <regex.h>
 
+#define MAXIMUM_MESSAGE_SIZE 128
+
 /**
  * This is the data type that holds information about parsing a
  * request. It contains the type of the request, the regular
@@ -173,7 +175,7 @@ alarm_request_t *parse_request(char input[]) {
                 strncpy(
                     alarm_request->message,
                     input + matches[3].rm_so,
-                    matches[3].rm_eo - matches[3].rm_so
+                    MAXIMUM_MESSAGE_SIZE
                 );
                 alarm_request->message[matches[3].rm_eo - matches[3].rm_so] = 0;
             }
