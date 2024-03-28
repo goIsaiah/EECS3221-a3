@@ -6,6 +6,23 @@
 
 #define USER_INPUT_BUFFER_SIZE 256
 
+/*******************************************************************************
+ *                             CONSUMER THREAD                                 *
+ ******************************************************************************/
+
+/**
+ * Consumer thread.
+ */
+void *consumer_thread_routine(void *arg) {
+    DEBUG_MESSAGE("Consumer thread running.");
+
+    return NULL;
+}
+
+/*******************************************************************************
+ *             DATA SHARED BETWEEN MAIN THREAD AND ALARM THREAD                *
+ ******************************************************************************/
+
 /**
  * Header of the alarm list. The is the data structure that is shared between
  * the main thread and the alarm thread.
@@ -24,9 +41,22 @@ pthread_mutex_t alarm_list_mutex = PTHREAD_MUTEX_INITIALIZER;
  */
 pthread_cond_t alarm_list_cond = PTHREAD_COND_INITIALIZER;
 
-void *alarm_thread(void *arg) {
+/*******************************************************************************
+ *                               ALARM THREAD                                  *
+ ******************************************************************************/
+
+/**
+ * Alarm thread.
+ */
+void *alarm_thread_routine(void *arg) {
+    DEBUG_MESSAGE("Alarm thread running.");
+
     return NULL;
 }
+
+/*******************************************************************************
+ *                     HELPER FUNCTIONS FOR MAIN THREAD                        *
+ ******************************************************************************/
 
 /**
  * Inserts the alarm request in its specified position in the alarm list (sorted
@@ -56,20 +86,16 @@ void insert_to_alarm_list(alarm_request_t *alarm_request) {
 }
 
 /**
- * Handles a comamnd.
+ * Handles a request.
+ *
+ * A request is handled by adding the request to the alarm list.
+ *
+ * Note that the alarm list mutex must be locked by the caller of this method
+ * (because it updates the alarm list).
  */
 void handle_request(alarm_request_t *alarm_request) {
-    insert_to_alarm_list(alarm_request);
-}
-
-void handle_request_thread_safe(alarm_request_t *alarm_request) {
     /*
-     * Lock mutex
-     */
-    pthread_mutex_lock(&alarm_list_mutex);
-
-    /*
-     * Handle command
+     * Insert alarm request to alarm list
      */
     insert_to_alarm_list(alarm_request);
 
@@ -85,6 +111,24 @@ void handle_request_thread_safe(alarm_request_t *alarm_request) {
         alarm_request->time,
         alarm_request->message
     );
+}
+
+/**
+ * Handles a request in a thread-safe way. This is done by locking the alarm
+ * list mutex, handling the request, then unlocking the alarm list mutex.
+ *
+ * A request is handled by adding the request to the alarm list.
+ */
+void handle_request_thread_safe(alarm_request_t *alarm_request) {
+    /*
+     * Lock mutex
+     */
+    pthread_mutex_lock(&alarm_list_mutex);
+
+    /*
+     * Handle request
+     */
+    handle_request(alarm_request);
 
     /*
      * Unlock mutex
@@ -92,11 +136,16 @@ void handle_request_thread_safe(alarm_request_t *alarm_request) {
     pthread_mutex_unlock(&alarm_list_mutex);
 }
 
+/*******************************************************************************
+ *                                 MAIN THREAD                                 *
+ ******************************************************************************/
+
 /**
  * Main thread.
  *
  * The main thread is responsible for creating one alarm thread and one consumer
- * thread.
+ * thread, receiving and parsing user input into alarm requests, and adding
+ * alarm requests to the alarm list.
  */
 int main() {
     char input[USER_INPUT_BUFFER_SIZE]; // Buffer to store user input.
@@ -105,7 +154,25 @@ int main() {
                                         // structure representing the user's
                                         // request).
 
+    pthread_t alarm_thread;             // Alarm thread.
+
+    pthread_t consumer_thread;          // Consumer thread.
+
     DEBUG_PRINT_START_MESSAGE();
+
+    /*
+     * Create alarm thread.
+     */
+    pthread_create(&alarm_thread, NULL, alarm_thread_routine, NULL);
+
+    DEBUG_MESSAGE("Alarm thread created");
+
+    /*
+     * Create consumer thread.
+     */
+    pthread_create(&consumer_thread, NULL, consumer_thread_routine, NULL);
+
+    DEBUG_MESSAGE("Consumer thread created");
 
     while (1) {
         printf("Alarm > ");
