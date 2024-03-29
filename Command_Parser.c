@@ -178,6 +178,8 @@ alarm_request_t *parse_request(char input[]) {
                     MAXIMUM_MESSAGE_SIZE
                 );
                 alarm_request->message[matches[3].rm_eo - matches[3].rm_so] = 0;
+            } else {
+                strncpy(alarm_request->message, "", MAXIMUM_MESSAGE_SIZE);
             }
 
             return alarm_request;
