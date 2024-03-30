@@ -3,6 +3,7 @@
 #include "types.h"
 #include "debug.h"
 #include "Command_Parser.h"
+#include <semaphore.h>
 
 #define USER_INPUT_BUFFER_SIZE 256
 #define CIRCULAR_BUFFER_SIZE 4
@@ -116,7 +117,8 @@ void insert_to_alarm_list(alarm_request_t *alarm_request) {
             current->next = alarm_request;
             alarm_request->next = next;
             return;
-        } else {
+        } 
+        else {
             current = next;
             next = next->next;
         }
@@ -125,6 +127,61 @@ void insert_to_alarm_list(alarm_request_t *alarm_request) {
     // Insert at the end of the list
     current->next = alarm_request;
     alarm_request->next = NULL;
+}
+
+/**
+ * Removes an alarm the list of alarms.
+ *
+ * The alarm list mutex MUST BE LOCKED by the caller of this method.
+ *
+ * The linked list of alarms is searched and when the correct ID is found, it
+ * edits the linked list to remove that alarm. The node that was removes is
+ * then returned.
+ */
+alarm_request_t *remove_alarm_from_list(int id) {
+    alarm_t *alarm_node = alarm_list_header.next;
+    alarm_t *alarm_prev = &alarm_list_header;
+
+    // Keeps on searching the list until it finds the correct ID
+    while (alarm_node != NULL) {
+        if (alarm_node->alarm_id == id) {
+            alarm_prev->next = alarm_node->next;
+            break; // Exit loop since ID has been found
+        }
+        // If the ID is not found, move to the next node
+        alarm_node = alarm_node->next;
+        alarm_prev = alarm_prev->next;
+    }
+    return alarm_node;
+}
+
+/**
+ * Finds an alarm in the list using a specified ID
+ *
+ * Alarm list has to be locked by the caller of this method
+ *
+ * Goes through the linked list, when specified ID is found, pointer
+ * to that alarm will be returned.
+ *
+ * If the specified ID is not found, return NULL.
+ */
+alarm_request_t* find_alarm_by_id(int id) {
+    alarm_request_t *alarm_node = alarm_list_header.next;
+    
+    //Loop through the list
+    while(alarm_node != NULL) {
+        //if ID is found, return pointer to it
+        if(alarm_node-> alarm_id == id) {
+            return alarm_node;
+        }
+        //if ID is NOT found, go to next node
+        else {
+            alarm_node = alarm_node->next;
+        }
+    }
+    //If the entire list was searched and specified ID was not
+    //found, return NULL.
+    return NULL;
 }
 
 /**
