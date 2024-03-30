@@ -5,6 +5,7 @@
 #include "Command_Parser.h"
 
 #define USER_INPUT_BUFFER_SIZE 256
+#define CIRCULAR_BUFFER_SIZE 4
 
 /*******************************************************************************
  *                             CONSUMER THREAD                                 *
@@ -18,6 +19,25 @@ void *consumer_thread_routine(void *arg) {
 
     return NULL;
 }
+
+/*******************************************************************************
+ *           DATA SHARED BETWEEN CONSUMER THREAD AND ALARM THREAD              *
+ ******************************************************************************/
+
+/**
+ * Circular buffer used to store alarms.
+ */
+alarm_request_t* circularBuffer[CIRCULAR_BUFFER_SIZE] = {NULL};
+
+/**
+ * Size of the circular buffer used to store alarms. 
+ */
+int circularBufferSize = 0;
+
+/**
+ * Integer used to keep track of where to write 
+ */
+int writeIndex = 0;
 
 /*******************************************************************************
  *             DATA SHARED BETWEEN MAIN THREAD AND ALARM THREAD                *
@@ -52,6 +72,28 @@ void *alarm_thread_routine(void *arg) {
     DEBUG_MESSAGE("Alarm thread running.");
 
     return NULL;
+}
+
+/*******************************************************************************
+ *                      HELPER FUNCTIONS FOR ALARM THREAD                      *
+ ******************************************************************************/
+
+/**
+ * Adds an alarm to the circular buffer.
+ */
+void write_to_circular_buffer(alarm_request_t *alarm_request) {
+    int current = -1;
+    if (circularBufferSize >= CIRCULAR_BUFFER_SIZE) {
+        printf("\nCircular buffer size is full.\n");
+    }
+    else {
+        circularBuffer[writeIndex] = alarm_request;
+        circularBufferSize = circularBufferSize + 1;
+        writeIndex = writeIndex + 1;
+        if (writeIndex == CIRCULAR_BUFFER_SIZE) {
+            writeIndex = 0;
+        }
+    }
 }
 
 /*******************************************************************************
