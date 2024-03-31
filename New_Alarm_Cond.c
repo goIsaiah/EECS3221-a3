@@ -1,4 +1,5 @@
 #include <pthread.h>
+#include <stdbool.h>
 #include "errors.h"
 #include "types.h"
 #include "debug.h"
@@ -7,6 +8,29 @@
 
 #define USER_INPUT_BUFFER_SIZE 256
 #define CIRCULAR_BUFFER_SIZE 4
+
+/*******************************************************************************
+ *        DATA SHARED BETWEEN PERIODIC DISPLAY THREADS AND ALARM THREAD        *
+ ******************************************************************************/
+
+/*******************************************************************************
+ *                           PERIODIC DISPLAY THREAD                           *
+ ******************************************************************************/
+
+/**
+ * A.3.5. Periodic display thread.
+ */
+void *periodic_display_thread_routine(void *arg) {
+    periodic_display_thread_t *thread = ((periodic_display_thread_t*) arg);
+
+    DEBUG_PRINTF("Periodic display thread %d running.\n", thread->thread_id);
+
+    while (1) {
+
+    }
+
+    return NULL;
+}
 
 /*******************************************************************************
  *                             CONSUMER THREAD                                 *
@@ -63,6 +87,15 @@ pthread_mutex_t alarm_list_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t alarm_list_cond = PTHREAD_COND_INITIALIZER;
 
 /*******************************************************************************
+ *                      DATA SPECIFIC TO ALARM THREAD                          *
+ ******************************************************************************/
+
+/**
+ * Header of the list of periodic display threads.
+ */
+periodic_display_thread_t thread_list_header = {0};
+
+/*******************************************************************************
  *                      HELPER FUNCTIONS FOR ALARM THREAD                      *
  ******************************************************************************/
 
@@ -91,30 +124,36 @@ alarm_request_t *get_most_recent_alarm_request() {
 }
 
 /**
- * A.3.3.2., A.3.3.3. Removes all alarm requests with the given alarm id from
- * the list of alarms.
+ * A.3.3.3. Removes all alarm requests with the given alarm id from the list of
+ * alarms, except for the given alarm request. The time value of the old alarm
+ * request that was removed is returned (so that the alarm thread can use it to
+ * check for periodic display threads). If no alarms were removed, then -1 is
+ * returned.
  *
  * Note that THIS METHOD WILL FREE ALARM REQUESTS THAT ARE FOUND, so don't keep
  * references to the alarm list entries.
  *
  * Note that the alarm list mutex MUST BE LOCKED by the caller of this method.
  */
-void remove_old_alarm_requests_from_list(int id, alarm_request_t *newest_alarm_request) {
+int remove_old_alarm_requests_from_list(int alarm_id, alarm_request_t *newest_alarm_request) {
     alarm_request_t *alarm_node = alarm_list_header.next;
     alarm_request_t *alarm_prev = &alarm_list_header;
     alarm_request_t *alarm_temp;
+    int old_time_value = -1;
 
     /*
      * Keeps on searching the list until it finds the correct ID
      */
     while (alarm_node != NULL) {
-        if (alarm_node->alarm_id == id) {
+        if (alarm_node->alarm_id == alarm_id) {
             /*
              * We have found an alarm request with the given ID. If it is not
              * the most recent alarm request, then remove it from the list and
-             * free it.
+             * free it. Also save the old request's time value so that it can be
+             * returned.
              */
             if (alarm_node != newest_alarm_request) {
+                old_time_value = alarm_node->time;
                 alarm_prev->next = alarm_node->next;
 
                 alarm_temp = alarm_node;
@@ -126,6 +165,64 @@ void remove_old_alarm_requests_from_list(int id, alarm_request_t *newest_alarm_r
         alarm_node = alarm_node->next;
         alarm_prev = alarm_prev->next;
     }
+
+    return old_time_value;
+}
+
+/**
+ * A.3.3.2. Removes all alarm requests with the given alarm id from the list of
+ * alarms.
+ *
+ * Note that THIS METHOD WILL FREE ALARM REQUESTS THAT ARE FOUND, so don't keep
+ * references to the alarm list entries.
+ *
+ * Note that the alarm list mutex MUST BE LOCKED by the caller of this method.
+ */
+void remove_alarm_requests_from_list(int alarm_id) {
+    alarm_request_t *alarm_node = alarm_list_header.next;
+    alarm_request_t *alarm_prev = &alarm_list_header;
+    alarm_request_t *alarm_temp;
+
+    /*
+     * Keeps on searching the list until it finds the correct ID
+     */
+    while (alarm_node != NULL) {
+        if (alarm_node->alarm_id == alarm_id) {
+            /*
+             * We have found an alarm request with the given ID, so  remove it
+             * from the list and free it.
+             */
+            alarm_prev->next = alarm_node->next;
+
+            alarm_temp = alarm_node;
+            alarm_node = alarm_node->next;
+            free(alarm_temp);
+        }
+
+        alarm_node = alarm_node->next;
+        alarm_prev = alarm_prev->next;
+    }
+}
+
+/**
+ * A.3.3.4. Checks if any alarm requests in the alarm list have the given time
+ * value.
+ *
+ * Returns true if there exists at least one alarm request in the alarm list
+ * that has the given time value, false otherwise.
+ */
+bool does_time_exist_in_alarm_list(int time) {
+    alarm_request_t *alarm_node = alarm_list_header.next;
+
+    while (alarm_node != NULL) {
+        if (alarm_node->time == time) {
+            return true;
+        }
+
+        alarm_node = alarm_node->next;
+    }
+
+    return false;
 }
 
 /**
@@ -174,6 +271,117 @@ void write_to_circular_buffer(alarm_request_t *alarm_request) {
     }
 }
 
+/**
+ * A.3.3.4. Checks if a thread in the thread list exists for the given time
+ * value.
+ *
+ * Returns true if a thread with that time value does exist in the thread list,
+ * false otherwise.
+ */
+bool does_thread_exist(int time) {
+    periodic_display_thread_t *thread = thread_list_header.next;
+
+    while (thread != NULL) {
+        if (thread->time == time) {
+            return true;
+        }
+
+        thread = thread->next;
+    }
+
+    return false;
+}
+
+/**
+ * Adds a thread to the thread list.
+ */
+void add_thread_to_list(periodic_display_thread_t *thread) {
+    if (thread_list_header.next == NULL) {
+        // If the thread list is empty, make the new thread the only element in
+        // the list.
+        thread_list_header.next = thread;
+    } else {
+        // If the thread list is not empty, insert the new thread as the first
+        // element of the list.
+        thread->next = thread_list_header.next;
+        thread_list_header.next = thread;
+    }
+}
+
+
+/**
+ * Removes all threads with the given time value from the list of threads.
+ *
+ * Note that THIS METHOD WILL FREE THREAD DATA THAT ARE FOUND, so don't keep
+ * references to the thread list entries.
+ */
+void remove_thread_from_list(int time) {
+    periodic_display_thread_t *thread_node = thread_list_header.next;
+    periodic_display_thread_t *thread_prev = &thread_list_header;
+    periodic_display_thread_t *thread_temp;
+
+    while (thread_node != NULL) {
+        if (thread_node->time == time) {
+            thread_prev->next = thread_node->next;
+
+            thread_temp = thread_node;
+            thread_node = thread_node->next;
+            free(thread_temp);
+        }
+
+        thread_node = thread_node->next;
+        thread_prev = thread_prev->next;
+    }
+}
+
+/**
+ * A.3.3.4. Creates a new periodic display thread and adds the data
+ * representation of the thread to the thread list.
+ */
+void create_periodic_display_thread(alarm_request_t *alarm_request) {
+    /*
+     * Allocate data for the new thread
+     */
+    periodic_display_thread_t *thread = malloc(sizeof(periodic_display_thread_t));
+    if (thread == NULL) {
+        errno_abort("Malloc failed");
+    }
+
+    /*
+     * Give time value and ID for the new thread
+     */
+    thread->time = alarm_request->time;
+    thread->thread_id = 0;
+
+    /*
+     * A.3.3.4. Create the new periodic display thread
+     */
+    pthread_create(
+        &thread->thread,
+        NULL,
+        periodic_display_thread_routine,
+        thread
+    );
+
+    /*
+     * Add the newly-created thread to the list of threads
+     */
+    add_thread_to_list(thread);
+
+    /*
+     * A.3.3.4. Print success message
+     */
+    printf(
+        "Alarm Thread Created New Periodic display thread %d For Alarm(%d) at "
+        "%ld: For New Time Value = %d Message = %s\n",
+        thread->thread_id,
+        alarm_request->alarm_id,
+        time(NULL),
+        alarm_request->time,
+        alarm_request->message
+    );
+}
+
 void handle_alarm_list_update() {
     /*
      * Make sure alarm list is not empty
@@ -187,12 +395,24 @@ void handle_alarm_list_update() {
      * A.3.3.1 Get the most recent alarm request
      */
     alarm_request_t *newest_alarm_request = get_most_recent_alarm_request();
+    int newest_alarm_id = newest_alarm_request->alarm_id;
+
+    int old_time_value;
 
     /*
      * Take action depending on the type of the alarm request
      */
     switch (newest_alarm_request->type) {
         case Start_Alarm:
+            /*
+             * A.3.3.4. If no thread in the thread list exists for the time
+             * value of the alarm request, then create a periodic display thread
+             * to handle requests with that time value.
+             */
+            if (does_thread_exist(newest_alarm_request->time) == false) {
+                create_periodic_display_thread(newest_alarm_request);
+            }
+
             printf("test!!!\n");
             break;
 
@@ -200,44 +420,86 @@ void handle_alarm_list_update() {
             /*
              * A.3.3.3.  Remove old alarm requests from list
              */
-            remove_old_alarm_requests_from_list(
-                newest_alarm_request->alarm_id,
+            old_time_value = remove_old_alarm_requests_from_list(
+                newest_alarm_id,
                 newest_alarm_request
             );
 
+            /*
+             * If there are no longer any alarm requests with the given time
+             * value in the alarm list, then remove the periodic display thread
+             * corresponding to that time value.
+             *
+             * Note that this does not destory the thread, just the data
+             * corresponding to it.
+             */
+            if (does_time_exist_in_alarm_list(old_time_value) == false) {
+                remove_thread_from_list(old_time_value);
+            }
+
+            /*
+             * A.3.3.3. Print success message.
+             */
             printf(
                 "Alarm Thread %d at %ld Has Removed All Alarm Requests "
                 "With Alarm ID %d From Alarm List Except The Most Recent "
                 "Change Alarm Request(%d) Time = %d Message = %s\n",
                 0,
                 time(NULL),
-                newest_alarm_request->alarm_id,
-                newest_alarm_request->alarm_id,
+                newest_alarm_id,
+                newest_alarm_id,
                 newest_alarm_request->time,
                 newest_alarm_request->message
             );
 
-            // Check if any thread has this time value, if not then create it
+            /*
+             * A.3.3.4. If no thread in the thread list exists for the time
+             * value of the alarm request, then create a periodic display thread
+             * to handle requests with that time value.
+             */
+            if (does_thread_exist(newest_alarm_request->time) == false) {
+                create_periodic_display_thread(newest_alarm_request);
+            }
 
             break;
 
         case Cancel_Alarm:
             /*
-             * Remove old alarm requests from list
+             * Save time value of the alarm request before deleting the alarm
+             * requests for this alarm ID
              */
-            remove_old_alarm_requests_from_list(
-                newest_alarm_request->alarm_id,
-                newest_alarm_request
-            );
+            old_time_value = newest_alarm_request->time;
 
+            /*
+             * A.3.3.2. Remove alarm requests from list with the given alarm ID
+             */
+            remove_alarm_requests_from_list(newest_alarm_id);
+
+            /*
+             * A.3.3.2. Print success message
+             */
             printf(
                 "Alarm Thread %d Has Cancelled and Removed All Alarm Requests "
                 "With Alarm ID %d from Alarm List at %ld\n",
                 0,
-                newest_alarm_request->alarm_id,
+                newest_alarm_id,
                 time(NULL)
             );
+
+            /*
+             * If there are no longer any alarm requests with the given time
+             * value in the alarm list, then remove the periodic display thread
+             * corresponding to that time value.
+             *
+             * Note that this does not destory the thread, just the data
+             * corresponding to it.
+             */
+            if (does_time_exist_in_alarm_list(old_time_value) == false) {
+                remove_thread_from_list(old_time_value);
+            }
+
             break;
+
         default:
             printf("Alarm thread found error: invalid alarm request type!\n");
             return;
