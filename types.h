@@ -51,5 +51,17 @@ static inline const char *request_type_string(alarm_request_t *alarm_request) {
     return enum_names[alarm_request->type];
 }
 
+/**
+ * Data type representing a periodic display thread. This is how the alarm
+ * thread will create periodic display threads, and is the type of the parameter
+ * that will be given to periodic display threads upon creation.
+ */
+typedef struct periodic_display_thread_t {
+    int thread_id;
+    pthread_t thread;
+    int time;
+    struct periodic_display_thread_t *next;
+} periodic_display_thread_t;
+
 #endif
 
