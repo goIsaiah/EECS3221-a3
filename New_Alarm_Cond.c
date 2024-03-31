@@ -63,21 +63,98 @@ pthread_mutex_t alarm_list_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t alarm_list_cond = PTHREAD_COND_INITIALIZER;
 
 /*******************************************************************************
- *                               ALARM THREAD                                  *
+ *                      HELPER FUNCTIONS FOR ALARM THREAD                      *
  ******************************************************************************/
 
 /**
- * Alarm thread.
+ * A.3.3.1 Returns a pointer to the most recently-added alarm request in the
+ * alarm list. If the alarm list is empty, then NULL is returned.
+ *
+ * This is done by traversing the entire alarm list and finding the alarm
+ * request with the greated creation time (most recently created).
+ *
+ * Note that the alarm list mutex must be locked by the caller of this method.
  */
-void *alarm_thread_routine(void *arg) {
-    DEBUG_MESSAGE("Alarm thread running.");
+alarm_request_t *get_most_recent_alarm_request() {
+    alarm_request_t *alarm_request = alarm_list_header.next;
+    alarm_request_t *newest_alarm_request = alarm_list_header.next;
 
-    return NULL;
+    while (alarm_request != NULL) {
+        if (alarm_request->creation_time > newest_alarm_request->creation_time) {
+            newest_alarm_request = alarm_request;
+        }
+
+        alarm_request = alarm_request->next;
+    }
+
+    return newest_alarm_request;
 }
 
-/*******************************************************************************
- *                      HELPER FUNCTIONS FOR ALARM THREAD                      *
- ******************************************************************************/
+/**
+ * A.3.3.2., A.3.3.3. Removes all alarm requests with the given alarm id from
+ * the list of alarms.
+ *
+ * Note that THIS METHOD WILL FREE ALARM REQUESTS THAT ARE FOUND, so don't keep
+ * references to the alarm list entries.
+ *
+ * Note that the alarm list mutex MUST BE LOCKED by the caller of this method.
+ */
+void remove_old_alarm_requests_from_list(int id, alarm_request_t *newest_alarm_request) {
+    alarm_request_t *alarm_node = alarm_list_header.next;
+    alarm_request_t *alarm_prev = &alarm_list_header;
+    alarm_request_t *alarm_temp;
+
+    /*
+     * Keeps on searching the list until it finds the correct ID
+     */
+    while (alarm_node != NULL) {
+        if (alarm_node->alarm_id == id) {
+            /*
+             * We have found an alarm request with the given ID. If it is not
+             * the most recent alarm request, then remove it from the list and
+             * free it.
+             */
+            if (alarm_node != newest_alarm_request) {
+                alarm_prev->next = alarm_node->next;
+
+                alarm_temp = alarm_node;
+                alarm_node = alarm_node->next;
+                free(alarm_temp);
+            }
+        }
+
+        alarm_node = alarm_node->next;
+        alarm_prev = alarm_prev->next;
+    }
+}
+
+/**
+ * A.3.3.6. Prints all the alarm requests in the alarm list. Note that the alarm
+ * list is sorted by the time values of the alarm requests, so the alarm
+ * requests will be printed in order of time values.
+ */
+void print_alarm_list() {
+    alarm_request_t *alarm_request = alarm_list_header.next;
+
+    printf("[");
+
+    while (alarm_request != NULL) {
+        printf(
+            "{AlarmId: %d, Type: %s, Time: %d, Message: %s}",
+            alarm_request->alarm_id,
+            request_type_string(alarm_request),
+            alarm_request->time,
+            alarm_request->message
+        );
+        if (alarm_request->next != NULL) {
+            printf(", ");
+        }
+
+        alarm_request = alarm_request->next;
+    }
+
+    printf("]\n");
+}
 
 /**
  * Adds an alarm to the circular buffer.
@@ -97,13 +174,123 @@ void write_to_circular_buffer(alarm_request_t *alarm_request) {
     }
 }
 
+void handle_alarm_list_update() {
+    /*
+     * Make sure alarm list is not empty
+     */
+    if (alarm_list_header.next == NULL) {
+        printf("Alarm thread found error: alarm list is empty!\n");
+        return;
+    }
+
+    /*
+     * A.3.3.1 Get the most recent alarm request
+     */
+    alarm_request_t *newest_alarm_request = get_most_recent_alarm_request();
+
+    /*
+     * Take action depending on the type of the alarm request
+     */
+    switch (newest_alarm_request->type) {
+        case Start_Alarm:
+            printf("test!!!\n");
+            break;
+
+        case Change_Alarm:
+            /*
+             * A.3.3.3.  Remove old alarm requests from list
+             */
+            remove_old_alarm_requests_from_list(
+                newest_alarm_request->alarm_id,
+                newest_alarm_request
+            );
+
+            printf(
+                "Alarm Thread %d at %ld Has Removed All Alarm Requests "
+                "With Alarm ID %d From Alarm List Except The Most Recent "
+                "Change Alarm Request(%d) Time = %d Message = %s\n",
+                0,
+                time(NULL),
+                newest_alarm_request->alarm_id,
+                newest_alarm_request->alarm_id,
+                newest_alarm_request->time,
+                newest_alarm_request->message
+            );
+
+            // Check if any thread has this time value, if not then create it
+
+            break;
+
+        case Cancel_Alarm:
+            /*
+             * Remove old alarm requests from list
+             */
+            remove_old_alarm_requests_from_list(
+                newest_alarm_request->alarm_id,
+                newest_alarm_request
+            );
+
+            printf(
+                "Alarm Thread %d Has Cancelled and Removed All Alarm Requests "
+                "With Alarm ID %d from Alarm List at %ld\n",
+                0,
+                newest_alarm_request->alarm_id,
+                time(NULL)
+            );
+            break;
+        default:
+            printf("Alarm thread found error: invalid alarm request type!\n");
+            return;
+    }
+
+    /*
+     * A.3.3.6. Print all the alarm requests currently in the alarm list
+     */
+    print_alarm_list();
+}
+
+/*******************************************************************************
+ *                               ALARM THREAD                                  *
+ ******************************************************************************/
+
+/**
+ * A.3.3. Alarm thread.
+ */
+void *alarm_thread_routine(void *arg) {
+    DEBUG_MESSAGE("Alarm thread running.");
+
+    /*
+     * Lock the alarm list mutex
+     */
+    pthread_mutex_lock(&alarm_list_mutex);
+
+    while (1) {
+        /*
+         * A.3.3.1. Wait for changes to the alarm list
+         */
+        pthread_cond_wait(&alarm_list_cond, &alarm_list_mutex);
+
+        /*
+         * Handle the update to the alarm list
+         */
+        handle_alarm_list_update();
+
+        /*
+         * Unlock alarm list mutex
+         */
+        pthread_mutex_unlock(&alarm_list_mutex);
+    }
+
+    return NULL;
+}
+
 /*******************************************************************************
  *                     HELPER FUNCTIONS FOR MAIN THREAD                        *
  ******************************************************************************/
 
 /**
- * Inserts the alarm request in its specified position in the alarm list (sorted
- * by their time values).
+ * A.3.2. Inserts the alarm request in its specified position in the alarm list
+ * (sorted by their time values).
  */
 void insert_to_alarm_list(alarm_request_t *alarm_request) {
     alarm_request_t *current = &alarm_list_header;
@@ -127,32 +314,6 @@ void insert_to_alarm_list(alarm_request_t *alarm_request) {
     // Insert at the end of the list
     current->next = alarm_request;
     alarm_request->next = NULL;
-}
-
-/**
- * Removes an alarm the list of alarms.
- *
- * The alarm list mutex MUST BE LOCKED by the caller of this method.
- *
- * The linked list of alarms is searched and when the correct ID is found, it
- * edits the linked list to remove that alarm. The node that was removes is
- * then returned.
- */
-alarm_request_t *remove_alarm_from_list(int id) {
-    alarm_t *alarm_node = alarm_list_header.next;
-    alarm_t *alarm_prev = &alarm_list_header;
-
-    // Keeps on searching the list until it finds the correct ID
-    while (alarm_node != NULL) {
-        if (alarm_node->alarm_id == id) {
-            alarm_prev->next = alarm_node->next;
-            break; // Exit loop since ID has been found
-        }
-        // If the ID is not found, move to the next node
-        alarm_node = alarm_node->next;
-        alarm_prev = alarm_prev->next;
-    }
-    return alarm_node;
 }
 
 /**
@@ -194,12 +355,59 @@ alarm_request_t* find_alarm_by_id(int id) {
  */
 void handle_request(alarm_request_t *alarm_request) {
     /*
-     * Insert alarm request to alarm list
+     * Get alarm requests with the given ID from the alarm list
+     */
+    alarm_request_t *old_alarm_request = find_alarm_by_id(alarm_request->alarm_id);
+
+    /*
+     * If the request was a Start_Alarm request, make sure there is not already
+     * an existing alarm request with that same ID.
+     */
+    if (alarm_request->type == Start_Alarm && old_alarm_request != NULL) {
+        printf(
+            "Alarm with ID %d already exists, so request type Start_Alarm "
+            "cannot be performed\n",
+            alarm_request->alarm_id
+        );
+        return;
+    }
+
+    /*
+     * If the request was not a Start_Alarm request, make sure there is already
+     * an existing alarm request with that same ID.
+     */
+    if (alarm_request->type != Start_Alarm && old_alarm_request == NULL) {
+        printf(
+            "Alarm with ID %d does not exist, so request type %s cannot be "
+            "performed on alarm ID %d\n",
+            alarm_request->alarm_id,
+            request_type_string(alarm_request),
+            alarm_request->alarm_id
+        );
+        return;
+    }
+
+    /*
+     * If the alarm request is a Cancel_Alarm request, then it will not have the
+     * time and message values from the user. In this case, copy the time and
+     * message values from the older request from the alarm list.
+     */
+    if (alarm_request->type == Cancel_Alarm) {
+        alarm_request->time = old_alarm_request->time;
+        strncpy(
+            alarm_request->message,
+            old_alarm_request->message,
+            strlen(old_alarm_request->message)
+        );
+    }
+
+    /*
+     * A.3.2. Insert alarm request to alarm list
      */
     insert_to_alarm_list(alarm_request);
 
     /*
-     * Print success message
+     * A.3.2. Print success message
      */
     printf(
         "Main Thread has Inserted Alarm_Request_Type %s Request(%d) at "
@@ -230,6 +438,11 @@ void handle_request_thread_safe(alarm_request_t *alarm_request) {
     handle_request(alarm_request);
 
     /*
+     * Signal the alarm thread to wake up
+     */
+    pthread_cond_broadcast(&alarm_list_cond);
+
+    /*
      * Unlock mutex
      */
     pthread_mutex_unlock(&alarm_list_mutex);
@@ -240,7 +453,7 @@ void handle_request_thread_safe(alarm_request_t *alarm_request) {
  ******************************************************************************/
 
 /**
- * Main thread.
+ * A.3.2. Main thread.
  *
  * The main thread is responsible for creating one alarm thread and one consumer
  * thread, receiving and parsing user input into alarm requests, and adding
@@ -260,14 +473,14 @@ int main() {
     DEBUG_PRINT_START_MESSAGE();
 
     /*
-     * Create alarm thread.
+     * A.3.2. Create alarm thread.
      */
     pthread_create(&alarm_thread, NULL, alarm_thread_routine, NULL);
 
     DEBUG_MESSAGE("Alarm thread created");
 
     /*
-     * Create consumer thread.
+     * A.3.2. Create consumer thread.
      */
     pthread_create(&consumer_thread, NULL, consumer_thread_routine, NULL);
 
@@ -277,25 +490,24 @@ int main() {
         printf("Alarm > ");
 
         /*
-         * Get a request from user input. If NULL, then the user did not enter a
-         * command.
+         * A.3.2. Get a request from user input. If NULL, then the user did not
+         * enter a command.
          */
         if (fgets(input, USER_INPUT_BUFFER_SIZE, stdin) == NULL) {
             printf("Bad command\n");
             continue;
         }
-        DEBUG_PRINTF("%d\n",sizeof(input));
 
         // Replace newline with null terminating character
         input[strcspn(input, "\n")] = 0;
 
         /*
-         * Parse user's request.
+         * A.3.2. Parse user's request.
          */
         alarm_request = parse_request(input);
 
         /*
-         * If alarm_request is NULL, then the request was invalid.
+         * A.3.2. If alarm_request is NULL, then the request was invalid.
          */
         if (alarm_request == NULL) {
             printf("Bad command\n");
