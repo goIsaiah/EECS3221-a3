@@ -49,13 +49,10 @@ int writeIndex = 0;
 int readIndex = 0;
 
 /**
- * Semaphore controlling access to the circular buffer. Any thread that updates
- * or reads from the circular buffer must have this mutex locked.
- *
- * This semaphore should be initialized to the value 1 and should behave like a
- * mutex.
+ * Mutex controlling access to the circular buffer. Any thread that updates or
+ * reads from the circular buffer must have this mutex locked.
  */
-sem_t circular_buffer_sem;
+pthread_mutex_t circular_buffer_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /**
  * Semaphore representing the number of empty spaces in the buffer.
@@ -117,7 +114,8 @@ void print_circular_buffer() {
 }
 
 /**
- * Gets an item from the circular buffer.
+ * Gets an item from the circular buffer. This will wait on a semaphore for
+ * requests to consume if the buffer is empty.
  */
 alarm_request_t *get_item_from_circular_buffer() {
     /*
@@ -128,10 +126,9 @@ alarm_request_t *get_item_from_circular_buffer() {
     sem_wait(&circular_buffer_full_sem);
 
     /*
-     * Wait on the circular buffer semaphore to ensure mututal exclusion on the
-     * buffer.
+     * Lock the circular buffer mutex to ensure mututal exclusion on the buffer.
      */
-    sem_wait(&circular_buffer_sem);
+    pthread_mutex_lock(&circular_buffer_mutex);
 
     /*
      * Get item from buffer
@@ -149,10 +146,10 @@ alarm_request_t *get_item_from_circular_buffer() {
     readIndex = (readIndex + 1) % CIRCULAR_BUFFER_SIZE;
 
     /*
-     * Signal the circular buffer semaphore to allow other threads to access
-     * the buffer.
+     * Unlock the circular buffer mutex to allow other threads to access the
+     * buffer.
      */
-    sem_post(&circular_buffer_sem);
+    pthread_mutex_unlock(&circular_buffer_mutex);
 
     /*
      * Signal the empty semaphore to signal that there is one more empty spot in
@@ -168,7 +165,7 @@ alarm_request_t *get_item_from_circular_buffer() {
  ******************************************************************************/
 
 /**
- * Consumer thread.
+ * A.3.4. Consumer thread.
  */
 void *consumer_thread_routine(void *arg) {
     DEBUG_MESSAGE("Consumer thread running.");
@@ -176,23 +173,41 @@ void *consumer_thread_routine(void *arg) {
     alarm_request_t *alarm_request;
 
     while (1) {
+        /*
+         * Get an alarm request from the circular buffer
+         */
         alarm_request = get_item_from_circular_buffer();
+
+        /*
+         * A.3.4.1. Print message that an alarm request has been retrieved from
+         * the circular buffer
+         */
+        printf(
+            "Consumer Thread has Retrieved Alarm_Request_Type %s Request(%d) "
+            "at %ld: Time = %d Message = %s from Circular_Buffer Index: %d\n",
+            request_type_string(alarm_request),
+            alarm_request->alarm_id,
+            time(NULL),
+            alarm_request->time,
+            alarm_request->message,
+            (readIndex + (CIRCULAR_BUFFER_SIZE - 1)) % CIRCULAR_BUFFER_SIZE
+        );
 
         DEBUG_PRINT_ALARM_REQUEST(alarm_request);
 
         /*
-         * Wait on the circular buffer semaphore to ensure mututal exclusion on
-         * the buffer.
+         * Lock the circular buffer mutex to ensure mututal exclusion on the
+         * buffer.
          */
-        sem_wait(&circular_buffer_sem);
+        pthread_mutex_lock(&circular_buffer_mutex);
 
         print_circular_buffer();
 
         /*
-         * Signal the circular buffer semaphore to allow other threads to access
-         * the buffer.
+         * Unlock the circular buffer mutex to allow other threads to access the
+         * buffer.
          */
-        sem_post(&circular_buffer_sem);
+        pthread_mutex_unlock(&circular_buffer_mutex);
     }
 
     return NULL;
@@ -293,6 +308,12 @@ int remove_old_alarm_requests_from_list(int alarm_id, alarm_request_t *newest_al
                 alarm_temp = alarm_node;
                 alarm_node = alarm_node->next;
                 free(alarm_temp);
+
+                /*
+                 * Don't increment alarm node because it has already been
+                 * incremented during the removal above.
+                 */
+                continue;
             }
         }
 
@@ -331,6 +352,12 @@ void remove_alarm_requests_from_list(int alarm_id) {
             alarm_temp = alarm_node;
             alarm_node = alarm_node->next;
             free(alarm_temp);
+
+            /*
+             * Don't increment alarm node because it has already been
+             * incremented during the removal above.
+             */
+            continue;
         }
 
         alarm_node = alarm_node->next;
@@ -388,7 +415,12 @@ void print_alarm_list() {
 }
 
 /**
- * Adds an alarm to the circular buffer.
+ * A.3.3.5. Adds an alarm to the circular buffer.
+ *
+ * This is the producer part of the bounded-buffer problem. It waits on the
+ * empty semaphore to decrement it, adds the item to the buffer, then signals
+ * the full semaphore to increment it. A third semaphore controls access to the
+ * buffer. This also increments the write index.
  */
 void write_to_circular_buffer(alarm_request_t *alarm_request) {
     /*
@@ -399,13 +431,13 @@ void write_to_circular_buffer(alarm_request_t *alarm_request) {
     sem_wait(&circular_buffer_empty_sem);
 
     /*
-     * Wait on the circular buffer semaphore to ensure mututal exclusion on the
+     * Lock the circular buffer mutex to ensure mututal exclusion on the
      * buffer.
      */
-    sem_wait(&circular_buffer_sem);
+    pthread_mutex_lock(&circular_buffer_mutex);
 
     /*
-     * Put the alarm request in the circular buffer
+     * A.3.3.5. Put the alarm request in the circular buffer
      */
     circularBuffer[writeIndex] = alarm_request;
 
@@ -415,10 +447,10 @@ void write_to_circular_buffer(alarm_request_t *alarm_request) {
     writeIndex = (writeIndex + 1) % CIRCULAR_BUFFER_SIZE;
 
     /*
-     * Signal the circular buffer semaphore to allow other threads to access
-     * the buffer.
+     * Unlock the circular buffer mutex to allow other threads to access the
+     * buffer.
      */
-    sem_post(&circular_buffer_sem);
+    pthread_mutex_unlock(&circular_buffer_mutex);
 
     /*
      * Signal the full semaphore to signal that there is one more item in the
@@ -482,6 +514,12 @@ void remove_thread_from_list(int time) {
             thread_temp = thread_node;
             thread_node = thread_node->next;
             free(thread_temp);
+
+            /*
+             * Don't increment alarm node because it has already been
+             * incremented during the removal above.
+             */
+            continue;
         }
 
         thread_node = thread_node->next;
@@ -548,11 +586,17 @@ void create_periodic_display_thread(alarm_request_t *alarm_request) {
  * requests.
  */
 alarm_request_t *copy_alarm_request(alarm_request_t *alarm_request) {
+    /*
+     * Allocate memory for the copy of the alarm request
+     */
     alarm_request_t *alarm_request_copy = malloc(sizeof(alarm_request_t));
     if (alarm_request_copy == NULL) {
         errno_abort("Malloc failed");
     }
 
+    /*
+     * Fill in data
+     */
     alarm_request_copy->alarm_id = alarm_request->alarm_id;
     alarm_request_copy->type = alarm_request->type;
     alarm_request_copy->time = alarm_request->time;
@@ -603,7 +647,6 @@ void handle_alarm_list_update() {
                 create_periodic_display_thread(newest_alarm_request);
             }
 
-            printf("test!!!\n");
             break;
 
         case Change_Alarm:
@@ -696,7 +739,7 @@ void handle_alarm_list_update() {
     }
 
     /*
-     * Add the alarm request to the circular buffer
+     * A.3.3.5. Add the alarm request to the circular buffer
      */
     write_to_circular_buffer(alarm_request_copy);
 
@@ -928,11 +971,6 @@ int main() {
     pthread_t consumer_thread;          // Consumer thread.
 
     DEBUG_PRINT_START_MESSAGE();
-
-    /*
-     * Initialize the circular buffer semaphore to 1.
-     */
-    sem_init(&circular_buffer_sem, 0, 1);
 
     /*
      * Initialize the circular buffer empty semaphore to the size of the buffer.

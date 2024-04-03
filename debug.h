@@ -50,10 +50,10 @@ static inline void debug_message(const char *message) {
 
 static inline void debug_print_alarm_request_without_newline(alarm_request_t *alarm_request) {
     debug_printf(
-        "{id: %d, type: %d, time: %d, message: %s, "
+        "{id: %d, type: %s, time: %d, message: %s, "
         "creation_time: %ld, next: %p}",
         alarm_request->alarm_id,
-        alarm_request->type,
+        request_type_string( alarm_request),
         alarm_request->time,
         alarm_request->message,
         alarm_request->creation_time,
