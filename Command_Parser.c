@@ -1,6 +1,7 @@
 #include "errors.h"
 #include "types.h"
 #include <regex.h>
+#include <time.h>
 
 #define MAXIMUM_MESSAGE_SIZE 128
 
@@ -181,6 +182,9 @@ alarm_request_t *parse_request(char input[]) {
             } else {
                 strncpy(alarm_request->message, "", MAXIMUM_MESSAGE_SIZE);
             }
+
+            // Set the creation time to now
+            alarm_request->creation_time = time(NULL);
 
             return alarm_request;
         }
