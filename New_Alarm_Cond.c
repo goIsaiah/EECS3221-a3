@@ -182,6 +182,32 @@ void *periodic_display_thread_routine(void *arg) {
 
     DEBUG_PRINTF("Periodic display thread %d running.\n", thread->thread_id);
 
+    alarm_request_t periodic_display_list_header = {0};
+    alarm_request_t *current_thread = &periodic_display_list_header;
+    int targetTime = thread->time;
+
+    alarm_request_t *thread_node = alarm_display_list_header.next;
+    alarm_request_t *thread_prev = &alarm_display_list_header;
+
+    // Loop through alarm list, add any with the specified time
+    while(thread_prev != NULL) {
+        if (thread_node->time == targetTime) {
+            if (current_thread == NULL) {
+                current_thread = thread_node;
+            }
+            else {
+                current_thread->next = thread_node;
+                current_thread = current_thread->next;
+            }
+        }
+        else {
+            thread_node = thread_node->next;
+            thread_prev = thread_prev->next;
+        }
+    }
+
+
+
     return NULL;
 }
 
