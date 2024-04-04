@@ -83,6 +83,32 @@ sem_t circular_buffer_empty_sem;
 sem_t circular_buffer_full_sem;
 
 /*******************************************************************************
+ *       DATA SHARED BETWEEN CONSUMER THREAD AND PERIODIC DISPLAY THREAD       *
+ ******************************************************************************/
+/**
+ * Header of the list of alarms.
+ */
+alarm_request_t alarm_header = {0};
+
+/**
+ * Mutex for the alarm list. Any thread reading or modifying the alarm list must
+ * have this mutex locked.
+ */
+pthread_mutex_t alarm_list_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/**
+ * Condition variable for the alarm list. This allows threads to wait for
+ * updates to the alarm list.
+ */
+pthread_cond_t alarm_list_cond = PTHREAD_COND_INITIALIZER;
+
+/**
+ * Mutex for the thread list. Any thread reading or modifying the thread list
+ * must have this mutex locked.
+ */
+pthread_mutex_t thread_list_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/*******************************************************************************
  *                     HELPER FUNCTIONS FOR CONSUMER THREAD                    *
  ******************************************************************************/
 
@@ -160,6 +186,80 @@ alarm_request_t *get_item_from_circular_buffer() {
     return alarm_request;
 }
 
+/**
+ * Inserts an alarm into the list of alarms.
+ *
+ * The alarm list mutex MUST BE LOCKED by the caller of this method.
+ *
+ * If an item in the list already exist with the given alarm's
+ * alarm_id, this method returns NULL (and prints an error message to
+ * the console). Otherwise, the alarm is added to the list and the
+ * alarm is returned.
+ */
+alarm_t *insert_alarm_into_list(alarm_request_t *alarm) {
+    alarm_request_t *alarm_node = &alarm_header;
+    alarm_request_t *next_alarm_node = alarm_header.next;
+
+    // Find where to insert it by comparing expiration time. The
+    // list should always be sorted by time.
+    while (next_alarm_node != NULL) {
+        if (alarm->alarm_id == next_alarm_node->alarm_id) {
+            /*
+             * Invalid because two alarms cannot have the
+             * same alarm_id. In this case, unlock the
+             * mutex and try again.
+             */
+            printf("Alarm with same ID exists\n");
+            return NULL;
+        }
+        else if (alarm->time < next_alarm_node->time) {
+            // Insert before next_alarm_node
+            alarm_node->next = alarm;
+            alarm->next = next_alarm_node;
+
+            return alarm;
+        }
+        else {
+            alarm_node = next_alarm_node;
+            next_alarm_node = next_alarm_node->next;
+        }
+    }
+
+    // Insert at the end of the list
+    alarm_node->next = alarm;
+    alarm->next = NULL;
+    return alarm;
+}
+
+/**
+ * Removes an alarm the list of alarms.
+ *
+ * The alarm list mutex MUST BE LOCKED by the caller of this method.
+ *
+ * The linked list of alarms is searched and when the correct ID is found, it
+ * edits the linked list to remove that alarm. The node that was removes is
+ * then returned.
+ */
+alarm_request_t *remove_alarm_from_list(int id)
+{
+    alarm_request_t *alarm_node = alarm_header.next;
+    alarm_request_t *alarm_prev = &alarm_header;
+
+    // Keeps on searching the list until it finds the correct ID
+    while (alarm_node != NULL)
+    {
+        if (alarm_node->alarm_id == id)
+        {
+            alarm_prev->next = alarm_node->next;
+            break; // Exit loop since ID has been found
+        }
+        // If the ID is not found, move to the next node
+        alarm_node = alarm_node->next;
+        alarm_prev = alarm_prev->next;
+    }
+    return alarm_node;
+}
+
 /*******************************************************************************
  *                             CONSUMER THREAD                                 *
  ******************************************************************************/
@@ -192,6 +292,36 @@ void *consumer_thread_routine(void *arg) {
             alarm_request->message,
             (readIndex + (CIRCULAR_BUFFER_SIZE - 1)) % CIRCULAR_BUFFER_SIZE
         );
+
+        /*
+     * Take action depending on the type of the alarm request
+     */
+    switch (newest_alarm_request->type) {
+        case Start_Alarm:
+            /*
+             * A.3.4.2. Start_Alarm request will be inserted in the Alarm
+             * Display List, where all outstanding alarm requests are placed
+             * in order of their time values.
+             */
+            if (does_thread_exist(newest_alarm_request->time) == false) {
+                create_periodic_display_thread(newest_alarm_request);
+            }
+
+            break;
+
+        case Change_Alarm:
+
+            break;
+
+        case Cancel_Alarm:
+            
+
+            break;
+
+        default:
+            printf("Alarm thread found error: invalid alarm request type!\n");
+            return;
+    }
 
         DEBUG_PRINT_ALARM_REQUEST(alarm_request);
 
