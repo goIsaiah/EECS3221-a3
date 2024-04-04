@@ -9,6 +9,167 @@
 #define USER_INPUT_BUFFER_SIZE 256
 #define CIRCULAR_BUFFER_SIZE 4
 
+#define MAIN_THREAD_ID 1
+#define ALARM_THREAD_ID 2
+#define CONSUMER_THREAD_ID 3
+#define PERIODIC_DISPLAY_THREAD_START_ID 4
+
+/*******************************************************************************
+ *      HELPER FUNCTIONS FOR MODIFYING LISTS (USED BY DIFFERENT THREADS)       *
+ ******************************************************************************/
+
+/**
+ * A.3.2. Inserts the alarm request in its specified position in the alarm list
+ * (sorted by their time values).
+ */
+void insert_to_alarm_list(alarm_request_t *list_header, alarm_request_t *alarm_request) {
+    alarm_request_t *current = list_header;
+    alarm_request_t *next = list_header->next;
+
+    // Find where to insert it by comparing alarm_id. The
+    // list should always be sorted by alarm_id.
+    while (next != NULL) {
+        if (alarm_request->time < next->time) {
+            // Insert before next
+            current->next = alarm_request;
+            alarm_request->next = next;
+            return;
+        } 
+        else {
+            current = next;
+            next = next->next;
+        }
+    }
+
+    // Insert at the end of the list
+    current->next = alarm_request;
+    alarm_request->next = NULL;
+}
+
+/**
+ * A.3.3.2. Removes all alarm requests with the given alarm id from the list of
+ * alarms.
+ *
+ * Note that THIS METHOD WILL FREE ALARM REQUESTS THAT ARE FOUND, so don't keep
+ * references to the alarm list entries.
+ *
+ * Note that the alarm list mutex MUST BE LOCKED by the caller of this method.
+ */
+void remove_alarm_requests_from_list(alarm_request_t *list_header, int alarm_id) {
+    alarm_request_t *alarm_node = list_header->next;
+    alarm_request_t *alarm_prev = list_header;
+    alarm_request_t *alarm_temp;
+
+    /*
+     * Keeps on searching the list until it finds the correct ID
+     */
+    while (alarm_node != NULL) {
+        if (alarm_node->alarm_id == alarm_id) {
+            /*
+             * We have found an alarm request with the given ID, so  remove it
+             * from the list and free it.
+             */
+            alarm_prev->next = alarm_node->next;
+
+            alarm_temp = alarm_node;
+            alarm_node = alarm_node->next;
+            free(alarm_temp);
+
+            /*
+             * Don't increment alarm node because it has already been
+             * incremented during the removal above.
+             */
+            continue;
+        }
+
+        alarm_node = alarm_node->next;
+        alarm_prev = alarm_prev->next;
+    }
+}
+
+/**
+ * A.3.3.3. Removes all alarm requests with the given alarm id from the list of
+ * alarms, except for the given alarm request. The time value of the old alarm
+ * request that was removed is returned (so that the alarm thread can use it to
+ * check for periodic display threads). If no alarms were removed, then -1 is
+ * returned.
+ *
+ * Note that THIS METHOD WILL FREE ALARM REQUESTS THAT ARE FOUND, so don't keep
+ * references to the alarm list entries.
+ *
+ * Note that the alarm list mutex MUST BE LOCKED by the caller of this method.
+ */
+int remove_old_alarm_requests_from_list(alarm_request_t *list_header, int alarm_id, alarm_request_t *newest_alarm_request) {
+    alarm_request_t *alarm_node = list_header->next;
+    alarm_request_t *alarm_prev = list_header;
+    alarm_request_t *alarm_temp;
+    int old_time_value = -1;
+
+    /*
+     * Keeps on searching the list until it finds the correct ID
+     */
+    while (alarm_node != NULL) {
+        if (alarm_node->alarm_id == alarm_id) {
+            /*
+             * We have found an alarm request with the given ID. If it is not
+             * the most recent alarm request, then remove it from the list and
+             * free it. Also save the old request's time value so that it can be
+             * returned.
+             */
+            if (alarm_node != newest_alarm_request) {
+                old_time_value = alarm_node->time;
+                alarm_prev->next = alarm_node->next;
+
+                alarm_temp = alarm_node;
+                alarm_node = alarm_node->next;
+                free(alarm_temp);
+
+                /*
+                 * Don't increment alarm node because it has already been
+                 * incremented during the removal above.
+                 */
+                continue;
+            }
+        }
+
+        alarm_node = alarm_node->next;
+        alarm_prev = alarm_prev->next;
+    }
+
+    return old_time_value;
+}
+
+/*******************************************************************************
+ *      DATA SHARED BETWEEN CONSUMER THREAD AND PERIODIC DISPLAY THREADS       *
+ ******************************************************************************/
+/**
+ * Header of the list of alarms for the alarm display list.
+ */
+alarm_request_t alarm_display_list_header = {0};
+
+/**
+ * The number of readers (peroidic display threads) currently reading from the
+ * alarm display list.
+ */
+int reader_count = 0;
+
+/**
+ * Semaphore for readers (periodic display threads) updating the reader count.
+ */
+sem_t reader_count_sem;
+
+/**
+ * Semaphore for controlling access to the alarm display list.
+ *
+ * This should solve the reader-writer problem. Only one thread should have this
+ * semaphore locked at a time. If it is a writer thread (consumer), then other
+ * writer threads should not be allowed to lock the semaphore. If it is a reader
+ * thread (periodic display thread) it should allow other readers to access the
+ * alarm display list, but should not allow the writer to acces the alarm
+ * display list.
+ */
+sem_t alarm_display_list_sem;
+
 /*******************************************************************************
  *                           PERIODIC DISPLAY THREAD                           *
  ******************************************************************************/
@@ -83,35 +244,21 @@ sem_t circular_buffer_empty_sem;
 sem_t circular_buffer_full_sem;
 
 /*******************************************************************************
- *       DATA SHARED BETWEEN CONSUMER THREAD AND PERIODIC DISPLAY THREAD       *
- ******************************************************************************/
-/**
- * Header of the list of alarms.
- */
-alarm_request_t alarm_header = {0};
-
-/**
- * Mutex for the alarm list. Any thread reading or modifying the alarm list must
- * have this mutex locked.
- */
-pthread_mutex_t alarm_list_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-/**
- * Condition variable for the alarm list. This allows threads to wait for
- * updates to the alarm list.
- */
-pthread_cond_t alarm_list_cond = PTHREAD_COND_INITIALIZER;
-
-/**
- * Mutex for the thread list. Any thread reading or modifying the thread list
- * must have this mutex locked.
- */
-pthread_mutex_t thread_list_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-/*******************************************************************************
  *                     HELPER FUNCTIONS FOR CONSUMER THREAD                    *
  ******************************************************************************/
 
+/**
+ * A.3.4.5. Prints the contents of the circular buffer.
+ *
+ * This uses the read index as the start and the write index as the end, and
+ * iterates through the elements in between, printing each one. This works
+ * because when an alarm request is added to the buffer the write index is
+ * incremented, and when an alarm is taken from the buffer the read index is
+ * incremented.
+ *
+ * Note that THE MUTEX FOR THE CIRCULAR BUFFER MUST BE LOCKED by the caller of
+ * this method.
+ */
 void print_circular_buffer() {
     alarm_request_t *alarm_request;
 
@@ -187,77 +334,102 @@ alarm_request_t *get_item_from_circular_buffer() {
 }
 
 /**
- * Inserts an alarm into the list of alarms.
- *
- * The alarm list mutex MUST BE LOCKED by the caller of this method.
- *
- * If an item in the list already exist with the given alarm's
- * alarm_id, this method returns NULL (and prints an error message to
- * the console). Otherwise, the alarm is added to the list and the
- * alarm is returned.
+ * Consume the alarm request that was retrieved from the circular buffer.
  */
-alarm_t *insert_alarm_into_list(alarm_request_t *alarm) {
-    alarm_request_t *alarm_node = &alarm_header;
-    alarm_request_t *next_alarm_node = alarm_header.next;
+void consume_alarm_request(alarm_request_t *alarm_request) {
+    /*
+     * Save alarm ID in case the alarm request is freed
+     */
+    int alarm_id = alarm_request->alarm_id;
 
-    // Find where to insert it by comparing expiration time. The
-    // list should always be sorted by time.
-    while (next_alarm_node != NULL) {
-        if (alarm->alarm_id == next_alarm_node->alarm_id) {
+    /*
+     * Take action depending on the type of the alarm request
+     */
+    switch (alarm_request->type) {
+        case Start_Alarm:
             /*
-             * Invalid because two alarms cannot have the
-             * same alarm_id. In this case, unlock the
-             * mutex and try again.
+             * A.3.4.2. Insert alarm request into alarm display list
              */
-            printf("Alarm with same ID exists\n");
-            return NULL;
-        }
-        else if (alarm->time < next_alarm_node->time) {
-            // Insert before next_alarm_node
-            alarm_node->next = alarm;
-            alarm->next = next_alarm_node;
+            insert_to_alarm_list(&alarm_display_list_header, alarm_request);
 
-            return alarm;
-        }
-        else {
-            alarm_node = next_alarm_node;
-            next_alarm_node = next_alarm_node->next;
-        }
+            /*
+             * A.3.4.2. Print message that alarm request has been inserted
+             * into alarm display list
+             */
+            printf(
+                "Consumer Thread has Inserted Alarm_Request_Type %s "
+                "Request(%d) at %ld: Time = %d Message = %s into Alarm "
+                "Display List.\n",
+                request_type_string(alarm_request),
+                alarm_id,
+                time(NULL),
+                alarm_request->time,
+                alarm_request->message
+            );
+
+            break;
+
+        case Change_Alarm:
+            /*
+             * A.3.4.3. Remove old requests with the same alarm ID
+             */
+            remove_old_alarm_requests_from_list(
+                &alarm_display_list_header,
+                alarm_request->alarm_id,
+                alarm_request
+            );
+
+            /*
+             * A.3.4.3. Insert alarm request into alarm display list
+             */
+            insert_to_alarm_list(&alarm_display_list_header, alarm_request);
+
+            /*
+             * A.3.4.3. Print message that old alarm requests have been
+             * removed and new alarm request has been inserted into alarm
+             * display list
+             */
+            printf(
+                "Consumer Thread %d at %ld has Removed All Previous Alarm "
+                "Requests With Alarm ID %d From Alarm Display List and Has"
+                "Inserted Retrieved Change Alarm Request(%d) Time = %d "
+                "Message = %s into Alarm Display List.\n",
+                CONSUMER_THREAD_ID,
+                time(NULL),
+                alarm_id,
+                alarm_id,
+                alarm_request->time,
+                alarm_request->message
+            );
+
+            break;
+
+        case Cancel_Alarm:
+            /*
+             * A.3.4.4. Remove alarm requests from alarm display list
+             */
+            remove_alarm_requests_from_list(&alarm_display_list_header, alarm_id);
+
+            /*
+             * A.3.4.4. Print message that alarm requests have been
+             * cancelled and removed from the alarm display list
+             */
+            printf(
+                "Consumer Thread %d Has Cancelled and Removed All Alarm "
+                "Requests With Alarm ID (%d) from Alarm Display List at "
+                "%ld.\n",
+                CONSUMER_THREAD_ID,
+                alarm_id,
+                time(NULL)
+            );
+
+            break;
+
+        default:
+            printf("Consumer thread found error: invalid alarm request type!\n");
+            return;
     }
 
-    // Insert at the end of the list
-    alarm_node->next = alarm;
-    alarm->next = NULL;
-    return alarm;
-}
-
-/**
- * Removes an alarm the list of alarms.
- *
- * The alarm list mutex MUST BE LOCKED by the caller of this method.
- *
- * The linked list of alarms is searched and when the correct ID is found, it
- * edits the linked list to remove that alarm. The node that was removes is
- * then returned.
- */
-alarm_request_t *remove_alarm_from_list(int id)
-{
-    alarm_request_t *alarm_node = alarm_header.next;
-    alarm_request_t *alarm_prev = &alarm_header;
-
-    // Keeps on searching the list until it finds the correct ID
-    while (alarm_node != NULL)
-    {
-        if (alarm_node->alarm_id == id)
-        {
-            alarm_prev->next = alarm_node->next;
-            break; // Exit loop since ID has been found
-        }
-        // If the ID is not found, move to the next node
-        alarm_node = alarm_node->next;
-        alarm_prev = alarm_prev->next;
-    }
-    return alarm_node;
 }
 
 /*******************************************************************************
@@ -293,36 +465,6 @@ void *consumer_thread_routine(void *arg) {
             (readIndex + (CIRCULAR_BUFFER_SIZE - 1)) % CIRCULAR_BUFFER_SIZE
         );
 
-        /*
-     * Take action depending on the type of the alarm request
-     */
-    switch (newest_alarm_request->type) {
-        case Start_Alarm:
-            /*
-             * A.3.4.2. Start_Alarm request will be inserted in the Alarm
-             * Display List, where all outstanding alarm requests are placed
-             * in order of their time values.
-             */
-            if (does_thread_exist(newest_alarm_request->time) == false) {
-                create_periodic_display_thread(newest_alarm_request);
-            }
-
-            break;
-
-        case Change_Alarm:
-
-            break;
-
-        case Cancel_Alarm:
-            
-
-            break;
-
-        default:
-            printf("Alarm thread found error: invalid alarm request type!\n");
-            return;
-    }
-
         DEBUG_PRINT_ALARM_REQUEST(alarm_request);
 
         /*
@@ -331,6 +473,9 @@ void *consumer_thread_routine(void *arg) {
          */
         pthread_mutex_lock(&circular_buffer_mutex);
 
+        /*
+         * A.3.4.5. Print the contents of the circular buffer
+         */
         print_circular_buffer();
 
         /*
@@ -374,6 +519,11 @@ pthread_cond_t alarm_list_cond = PTHREAD_COND_INITIALIZER;
  */
 periodic_display_thread_t thread_list_header = {0};
 
+/**
+ * The number of periodic display threads that the alarm thread has created.
+ */
+int number_of_periodic_display_threads = 0;
+
 /*******************************************************************************
  *                      HELPER FUNCTIONS FOR ALARM THREAD                      *
  ******************************************************************************/
@@ -402,98 +552,6 @@ alarm_request_t *get_most_recent_alarm_request() {
     return newest_alarm_request;
 }
 
-/**
- * A.3.3.3. Removes all alarm requests with the given alarm id from the list of
- * alarms, except for the given alarm request. The time value of the old alarm
- * request that was removed is returned (so that the alarm thread can use it to
- * check for periodic display threads). If no alarms were removed, then -1 is
- * returned.
- *
- * Note that THIS METHOD WILL FREE ALARM REQUESTS THAT ARE FOUND, so don't keep
- * references to the alarm list entries.
- *
- * Note that the alarm list mutex MUST BE LOCKED by the caller of this method.
- */
-int remove_old_alarm_requests_from_list(int alarm_id, alarm_request_t *newest_alarm_request) {
-    alarm_request_t *alarm_node = alarm_list_header.next;
-    alarm_request_t *alarm_prev = &alarm_list_header;
-    alarm_request_t *alarm_temp;
-    int old_time_value = -1;
-
-    /*
-     * Keeps on searching the list until it finds the correct ID
-     */
-    while (alarm_node != NULL) {
-        if (alarm_node->alarm_id == alarm_id) {
-            /*
-             * We have found an alarm request with the given ID. If it is not
-             * the most recent alarm request, then remove it from the list and
-             * free it. Also save the old request's time value so that it can be
-             * returned.
-             */
-            if (alarm_node != newest_alarm_request) {
-                old_time_value = alarm_node->time;
-                alarm_prev->next = alarm_node->next;
-
-                alarm_temp = alarm_node;
-                alarm_node = alarm_node->next;
-                free(alarm_temp);
-
-                /*
-                 * Don't increment alarm node because it has already been
-                 * incremented during the removal above.
-                 */
-                continue;
-            }
-        }
-
-        alarm_node = alarm_node->next;
-        alarm_prev = alarm_prev->next;
-    }
-
-    return old_time_value;
-}
-
-/**
- * A.3.3.2. Removes all alarm requests with the given alarm id from the list of
- * alarms.
- *
- * Note that THIS METHOD WILL FREE ALARM REQUESTS THAT ARE FOUND, so don't keep
- * references to the alarm list entries.
- *
- * Note that the alarm list mutex MUST BE LOCKED by the caller of this method.
- */
-void remove_alarm_requests_from_list(int alarm_id) {
-    alarm_request_t *alarm_node = alarm_list_header.next;
-    alarm_request_t *alarm_prev = &alarm_list_header;
-    alarm_request_t *alarm_temp;
-
-    /*
-     * Keeps on searching the list until it finds the correct ID
-     */
-    while (alarm_node != NULL) {
-        if (alarm_node->alarm_id == alarm_id) {
-            /*
-             * We have found an alarm request with the given ID, so  remove it
-             * from the list and free it.
-             */
-            alarm_prev->next = alarm_node->next;
-
-            alarm_temp = alarm_node;
-            alarm_node = alarm_node->next;
-            free(alarm_temp);
-
-            /*
-             * Don't increment alarm node because it has already been
-             * incremented during the removal above.
-             */
-            continue;
-        }
-
-        alarm_node = alarm_node->next;
-        alarm_prev = alarm_prev->next;
-    }
-}
 
 /**
  * A.3.3.4. Checks if any alarm requests in the alarm list have the given time
@@ -624,6 +682,8 @@ void add_thread_to_list(periodic_display_thread_t *thread) {
         thread->next = thread_list_header.next;
         thread_list_header.next = thread;
     }
+    // Increment number of periodic display threads
+    number_of_periodic_display_threads++;
 }
 
 /**
@@ -644,6 +704,9 @@ void remove_thread_from_list(int time) {
             thread_temp = thread_node;
             thread_node = thread_node->next;
             free(thread_temp);
+
+            // Decrement number of periodic display threads
+            number_of_periodic_display_threads--;
 
             /*
              * Don't increment alarm node because it has already been
@@ -674,7 +737,8 @@ void create_periodic_display_thread(alarm_request_t *alarm_request) {
      * Give time value and ID for the new thread
      */
     thread->time = alarm_request->time;
-    thread->thread_id = 0;
+    thread->thread_id = PERIODIC_DISPLAY_THREAD_START_ID
+        + number_of_periodic_display_threads;
 
     /*
      * A.3.3.4. Create the new periodic display thread
@@ -784,6 +848,7 @@ void handle_alarm_list_update() {
              * A.3.3.3.  Remove old alarm requests from list
              */
             old_time_value = remove_old_alarm_requests_from_list(
+                &alarm_list_header,
                 newest_alarm_id,
                 newest_alarm_request
             );
@@ -836,7 +901,7 @@ void handle_alarm_list_update() {
             /*
              * A.3.3.2. Remove alarm requests from list with the given alarm ID
              */
-            remove_alarm_requests_from_list(newest_alarm_id);
+            remove_alarm_requests_from_list(&alarm_list_header, newest_alarm_id);
 
             /*
              * A.3.3.2. Print success message
@@ -917,34 +982,6 @@ void *alarm_thread_routine(void *arg) {
 /*******************************************************************************
  *                     HELPER FUNCTIONS FOR MAIN THREAD                        *
  ******************************************************************************/
-
-/**
- * A.3.2. Inserts the alarm request in its specified position in the alarm list
- * (sorted by their time values).
- */
-void insert_to_alarm_list(alarm_request_t *alarm_request) {
-    alarm_request_t *current = &alarm_list_header;
-    alarm_request_t *next = alarm_list_header.next;
-
-    // Find where to insert it by comparing alarm_id. The
-    // list should always be sorted by alarm_id.
-    while (next != NULL) {
-        if (alarm_request->time < next->time) {
-            // Insert before next
-            current->next = alarm_request;
-            alarm_request->next = next;
-            return;
-        } 
-        else {
-            current = next;
-            next = next->next;
-        }
-    }
-
-    // Insert at the end of the list
-    current->next = alarm_request;
-    alarm_request->next = NULL;
-}
 
 /**
  * Finds an alarm in the list using a specified ID
@@ -1034,7 +1071,7 @@ void handle_request(alarm_request_t *alarm_request) {
     /*
      * A.3.2. Insert alarm request to alarm list
      */
-    insert_to_alarm_list(alarm_request);
+    insert_to_alarm_list(&alarm_list_header, alarm_request);
 
     /*
      * A.3.2. Print success message
