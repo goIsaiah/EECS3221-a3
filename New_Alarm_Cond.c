@@ -182,27 +182,59 @@ void *periodic_display_thread_routine(void *arg) {
 
     DEBUG_PRINTF("Periodic display thread %d running.\n", thread->thread_id);
 
+    // List of alarms for the periodic display thread
     alarm_request_t periodic_display_list_header = {0};
-    alarm_request_t *current_thread = &periodic_display_list_header;
+    alarm_request_t *current_node = &periodic_display_list_header;
+    alarm_request_t *next_node = periodic_display_list_header.next;
     int targetTime = thread->time;
 
+    // List of alarms in the display list
     alarm_request_t *thread_node = alarm_display_list_header.next;
     alarm_request_t *thread_prev = &alarm_display_list_header;
 
     // Loop through alarm list, add any with the specified time
     while(thread_prev != NULL) {
         if (thread_node->time == targetTime) {
-            if (current_thread == NULL) {
-                current_thread = thread_node;
+            // List is empty, insert at head
+            if (periodic_display_list_header.next == NULL) {
+                periodic_display_list_header.next = thread_node;
             }
             else {
-                current_thread->next = thread_node;
-                current_thread = current_thread->next;
+                current_node = thread_node;
             }
+            current_node->next = current_node->next;
+            next_node = next_node->next;
+            thread_node = thread_node->next;
+            thread_prev = thread_prev->next;
         }
         else {
             thread_node = thread_node->next;
             thread_prev = thread_prev->next;
+        }
+    }
+
+    while(1) {
+        sem_wait(&reader_count_sem);
+        reader_count += 1;
+        if (reader_count == 1) {
+            sem_wait(&alarm_display_list_sem);
+        }
+        sem_post(&reader_count_sem);
+
+        /**
+         * A.3.5.1 Periodically prints the messages of all the alarms with
+         * the same Time value every Time seconds.
+         */
+        alarm_request_t *current = &periodic_display_list_header;
+        while (current != NULL) {
+            printf(
+                "ALARM MESSAGE (%d) PRINTED BY ALARM DISPLAY THREAD %d at %ld: TIME = %d MESSAGE = %s\n",
+                current->alarm_id,
+                thread->thread_id,
+                time(NULL),
+                current->time,
+                current->message);
+            current = current->next;
         }
     }
 
