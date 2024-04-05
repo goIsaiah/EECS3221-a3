@@ -171,6 +171,43 @@ sem_t reader_count_sem;
 sem_t alarm_display_list_sem;
 
 /*******************************************************************************
+ *               HELPER FUNCTIONS FOR PERIODIC DISPLAY THREAD                  *
+ ******************************************************************************/
+void add_to_periodic_display_list(alarm_request_t* periodic_display_list_header, int targetTime) {
+    // alarm_request_t periodic_display_list_header = {0};
+    alarm_request_t *current_node = periodic_display_list_header;
+    alarm_request_t *next_node = periodic_display_list_header->next;
+
+    alarm_request_t *thread_node;
+    alarm_request_t *thread_prev;
+
+    thread_node = alarm_display_list_header.next;
+    thread_prev = &alarm_display_list_header;
+
+    // Loop through alarm list, add any with the specified time
+    while(thread_node != NULL) {
+        if (thread_node->time == targetTime) {
+            // List is empty, insert at head
+            if (periodic_display_list_header->next == NULL) {
+                periodic_display_list_header->next = thread_node;
+            }
+            else {
+                //current_node = thread_node;
+                thread_node->next = periodic_display_list_header->next;
+                periodic_display_list_header->next = thread_node;
+            }
+            thread_node = thread_node->next;
+            thread_prev = thread_prev->next;
+        }
+        else {
+            thread_node = thread_node->next;
+            thread_prev = thread_prev->next;
+        }
+    }
+
+} 
+
+/*******************************************************************************
  *                           PERIODIC DISPLAY THREAD                           *
  ******************************************************************************/
 
@@ -184,36 +221,17 @@ void *periodic_display_thread_routine(void *arg) {
 
     // List of alarms for the periodic display thread
     alarm_request_t periodic_display_list_header = {0};
-    alarm_request_t *current_node = &periodic_display_list_header;
-    alarm_request_t *next_node = periodic_display_list_header.next;
+    // alarm_request_t *current_node = &periodic_display_list_header;
+    // alarm_request_t *next_node = periodic_display_list_header.next;
     int targetTime = thread->time;
 
-    // List of alarms in the display list
-    alarm_request_t *thread_node = alarm_display_list_header.next;
-    alarm_request_t *thread_prev = &alarm_display_list_header;
-
-    // Loop through alarm list, add any with the specified time
-    while(thread_prev != NULL) {
-        if (thread_node->time == targetTime) {
-            // List is empty, insert at head
-            if (periodic_display_list_header.next == NULL) {
-                periodic_display_list_header.next = thread_node;
-            }
-            else {
-                current_node = thread_node;
-            }
-            current_node->next = current_node->next;
-            next_node = next_node->next;
-            thread_node = thread_node->next;
-            thread_prev = thread_prev->next;
-        }
-        else {
-            thread_node = thread_node->next;
-            thread_prev = thread_prev->next;
-        }
-    }
+    alarm_request_t *thread_node;
+    alarm_request_t *thread_prev;
 
     while(1) {
+        sleep(targetTime);
+        thread_node = alarm_display_list_header.next;
+        thread_prev = &alarm_display_list_header;
         sem_wait(&reader_count_sem);
         reader_count += 1;
         if (reader_count == 1) {
@@ -221,11 +239,13 @@ void *periodic_display_thread_routine(void *arg) {
         }
         sem_post(&reader_count_sem);
 
+        add_to_periodic_display_list(&periodic_display_list_header, targetTime);
+
         /**
          * A.3.5.1 Periodically prints the messages of all the alarms with
          * the same Time value every Time seconds.
          */
-        alarm_request_t *current = &periodic_display_list_header;
+        alarm_request_t *current = periodic_display_list_header.next;
         while (current != NULL) {
             printf(
                 "ALARM MESSAGE (%d) PRINTED BY ALARM DISPLAY THREAD %d at %ld: TIME = %d MESSAGE = %s\n",
@@ -236,8 +256,14 @@ void *periodic_display_thread_routine(void *arg) {
                 current->message);
             current = current->next;
         }
-    }
 
+        sem_wait(&reader_count_sem);
+        reader_count -= 1;
+        if (reader_count == 0) {
+            sem_post(&alarm_display_list_sem);
+        }
+        sem_post(&reader_count_sem);
+    }
 
 
     return NULL;
@@ -523,7 +549,10 @@ void *consumer_thread_routine(void *arg) {
             (readIndex + (CIRCULAR_BUFFER_SIZE - 1)) % CIRCULAR_BUFFER_SIZE
         );
 
+        sem_wait(&alarm_display_list_sem);
         DEBUG_PRINT_ALARM_REQUEST(alarm_request);
+        consume_alarm_request(alarm_request);
+        sem_post(&alarm_display_list_sem);
 
         /*
          * Lock the circular buffer mutex to ensure mututal exclusion on the
@@ -1206,6 +1235,10 @@ int main() {
      * Initialize the circular buffer full semaphore to 0.
      */
     sem_init(&circular_buffer_full_sem, 0, 0);
+
+    sem_init(&alarm_display_list_sem, 0, 1);
+
+    sem_init(&reader_count_sem, 0, 1);
 
     /*
      * A.3.2. Create alarm thread.
