@@ -171,6 +171,26 @@ sem_t reader_count_sem;
 sem_t alarm_display_list_sem;
 
 /*******************************************************************************
+ *               HELPER FUNCTIONS FOR PERIODIC DISPLAY THREAD                  *
+ ******************************************************************************/
+ alarm_request_t remove_from_periodic_display_list(alarm_request_t* alarm_header, int id) {
+    alarm_t *alarm_node = alarm_header.next;
+    alarm_t *alarm_prev = &alarm_header;
+
+    // Keeps on searching the list until it finds the correct ID
+    while (alarm_node != NULL) {
+        if (alarm_node->alarm_id == id) {
+            alarm_prev->next = alarm_node->next;
+            break; // Exit loop since ID has been found
+        }
+        // If the ID is not found, move to the next node
+        alarm_node = alarm_node->next;
+        alarm_prev = alarm_prev->next;
+    }
+    return alarm_node;
+ }
+
+/*******************************************************************************
  *                           PERIODIC DISPLAY THREAD                           *
  ******************************************************************************/
 
@@ -210,12 +230,9 @@ void *periodic_display_thread_routine(void *arg) {
                     periodic_display_list_header.next = thread_node;
                 }
                 else {
-                    //current_node = thread_node;
                     current_node->next = thread_node;
                     thread_node->next = next_node;
                 }
-                //current_node = current_node->next;
-                //next_node = next_node->next;
                 thread_node = thread_node->next;
                 thread_prev = thread_prev->next;
             }
@@ -231,14 +248,34 @@ void *periodic_display_thread_routine(void *arg) {
          */
         alarm_request_t *current = periodic_display_list_header.next;
         while (current != NULL) {
-            printf(
-                "ALARM MESSAGE (%d) PRINTED BY ALARM DISPLAY THREAD %d at %ld: TIME = %d MESSAGE = %s\n",
-                current->alarm_id,
-                thread->thread_id,
-                time(NULL),
-                current->time,
-                current->message);
-            current = current->next;
+            switch (current->type) {
+                case Start_Alarm:
+                    printf(
+                        "ALARM MESSAGE (%d) PRINTED BY ALARM DISPLAY THREAD %d at %ld: TIME = %d MESSAGE = %s\n",
+                        current->alarm_id,
+                        thread->thread_id,
+                        time(NULL),
+                        current->time,
+                        current->message);
+                    current = current->next;
+                    break;
+
+                case Cancel_Alarm:
+                    printf(
+                        "Display thread %d Has Stopped Printing Message of Alarm(%d) at %ld: Time = %d Message = %s\n",
+                        thread->thread_id,
+                        current->alarm_id,
+                        time(NULL),
+                        current->time,
+                        current->message);
+                    current = current->next;
+                    periodic_display_list_header = remove_from_periodic_display_list(&periodic_display_list_header, current->alarm_id);
+                    break;
+
+                default:
+                    printf("Periodic display thread found error: invalid alarm request type!\n");
+                    break;
+            }
         }
 
         sem_wait(&reader_count_sem);
