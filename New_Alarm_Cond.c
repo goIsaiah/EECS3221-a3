@@ -173,47 +173,34 @@ sem_t alarm_display_list_sem;
 /*******************************************************************************
  *               HELPER FUNCTIONS FOR PERIODIC DISPLAY THREAD                  *
  ******************************************************************************/
-void add_to_periodic_display_list(alarm_request_t* periodic_display_list_header, int targetTime) {
-    // alarm_request_t periodic_display_list_header = {0};
+void add_to_periodic_display_list(alarm_request_t *periodic_display_list_header, int targetTime, alarm_request_t **thread_node, alarm_request_t **thread_prev) {
     alarm_request_t *current_node = periodic_display_list_header;
     alarm_request_t *next_node = periodic_display_list_header->next;
 
-    alarm_request_t *thread_node;
-    alarm_request_t *thread_prev;
-
-    thread_node = alarm_display_list_header.next;
-    thread_prev = &alarm_display_list_header;
-
     // Loop through alarm list, add any with the specified time
-    while(thread_node != NULL) {
-        if (thread_node->time == targetTime) {
+    while (*thread_node != NULL) {
+        if ((*thread_node)->time == targetTime) {
             // List is empty, insert at head
             if (periodic_display_list_header->next == NULL) {
-                periodic_display_list_header->next = thread_node;
+                periodic_display_list_header->next = *thread_node;
+            } else {
+                current_node->next = *thread_node;
+                (*thread_node)->next = next_node;
             }
-            else {
-                //current_node = thread_node;
-                thread_node->next = periodic_display_list_header->next;
-                periodic_display_list_header->next = thread_node;
-            }
-            thread_node = thread_node->next;
-            thread_prev = thread_prev->next;
-        }
-        else {
-            thread_node = thread_node->next;
-            thread_prev = thread_prev->next;
+            *thread_node = (*thread_node)->next;
+            *thread_prev = (*thread_prev)->next;
+        } else {
+            *thread_node = (*thread_node)->next;
+            *thread_prev = (*thread_prev)->next;
         }
     }
+}
 
-} 
 
 /*******************************************************************************
  *                           PERIODIC DISPLAY THREAD                           *
  ******************************************************************************/
 
-/**
- * A.3.5. Periodic display thread.
- */
 void *periodic_display_thread_routine(void *arg) {
     periodic_display_thread_t *thread = ((periodic_display_thread_t*) arg);
 
@@ -221,8 +208,6 @@ void *periodic_display_thread_routine(void *arg) {
 
     // List of alarms for the periodic display thread
     alarm_request_t periodic_display_list_header = {0};
-    // alarm_request_t *current_node = &periodic_display_list_header;
-    // alarm_request_t *next_node = periodic_display_list_header.next;
     int targetTime = thread->time;
 
     alarm_request_t *thread_node;
@@ -239,7 +224,7 @@ void *periodic_display_thread_routine(void *arg) {
         }
         sem_post(&reader_count_sem);
 
-        add_to_periodic_display_list(&periodic_display_list_header, targetTime);
+        add_to_periodic_display_list(&periodic_display_list_header, targetTime, &thread_node, &thread_prev);
 
         /**
          * A.3.5.1 Periodically prints the messages of all the alarms with
@@ -265,9 +250,10 @@ void *periodic_display_thread_routine(void *arg) {
         sem_post(&reader_count_sem);
     }
 
-
     return NULL;
 }
+
+
 
 /*******************************************************************************
  *           DATA SHARED BETWEEN CONSUMER THREAD AND ALARM THREAD              *
@@ -1290,4 +1276,3 @@ int main() {
         DEBUG_PRINT_ALARM_LIST(&alarm_list_header);
     }
 }
-
