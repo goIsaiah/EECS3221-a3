@@ -190,6 +190,33 @@ sem_t alarm_display_list_sem;
     return alarm_node;
  }
 
+ int search_alarm_list(int id, alarm_request_t *current) {
+    alarm_request_t *thread_node = alarm_display_list_header.next;
+    alarm_request_t *thread_prev = &alarm_display_list_header;
+
+    while(thread_node != NULL) {
+        if (thread_node->alarm_id == id) {
+            if (thread_node->time != current->time) {
+                // Time has been changed
+                return(2);
+            }
+            else if (thread_node->message != current->message) {
+                // Message has been changed
+                return(3);
+            }
+            // Alarm exists, nothing changed
+            return(1);
+        }
+        else {
+            thread_node = thread_node->next;
+            thread_prev = thread_prev->next;
+        }
+    }
+
+    // Alarm doesn't exist, has been cancelled
+    return(0);
+ }
+
 /*******************************************************************************
  *                           PERIODIC DISPLAY THREAD                           *
  ******************************************************************************/
@@ -210,6 +237,8 @@ void *periodic_display_thread_routine(void *arg) {
 
     alarm_request_t *thread_node;
     alarm_request_t *thread_prev;
+
+    int exists;
 
     while(1) {
         sleep(targetTime);
@@ -247,35 +276,52 @@ void *periodic_display_thread_routine(void *arg) {
          * the same Time value every Time seconds.
          */
         alarm_request_t *current = periodic_display_list_header.next;
+        exists = 0;
         while (current != NULL) {
-            switch (current->type) {
-                case Start_Alarm:
-                    printf(
-                        "ALARM MESSAGE (%d) PRINTED BY ALARM DISPLAY THREAD %d at %ld: TIME = %d MESSAGE = %s\n",
-                        current->alarm_id,
-                        thread->thread_id,
-                        time(NULL),
-                        current->time,
-                        current->message);
-                    current = current->next;
-                    break;
+            exists = search_alarm_list(current->alarm_id, current);
 
-                case Cancel_Alarm:
-                    printf(
-                        "Display thread %d Has Stopped Printing Message of Alarm(%d) at %ld: Time = %d Message = %s\n",
-                        thread->thread_id,
-                        current->alarm_id,
-                        time(NULL),
-                        current->time,
-                        current->message);
-                    current = current->next;
-                    periodic_display_list_header = remove_from_periodic_display_list(&periodic_display_list_header, current->alarm_id);
-                    break;
-
-                default:
-                    printf("Periodic display thread found error: invalid alarm request type!\n");
-                    break;
+            // Alarm exists, print standard periodic message
+            if (exists == 1) {
+                printf(
+                    "ALARM MESSAGE (%d) PRINTED BY ALARM DISPLAY THREAD %d at %ld: TIME = %d MESSAGE = %s\n",
+                    current->alarm_id,
+                    thread->thread_id,
+                    time(NULL),
+                    current->time,
+                    current->message);
+                current = current->next;
             }
+            // Alarm has been cancelled, remove from periodic display list
+            if (exists == 0) {
+                printf(
+                    "Display thread %d Has Stopped Printing Message of Alarm(%d) at %ld: Time = %d Message = %s\n",
+                    thread->thread_id,
+                    current->alarm_id,
+                    time(NULL),
+                    current->time,
+                    current->message);
+                periodic_display_list_header = remove_from_periodic_display_list(&periodic_display_list_header, current->alarm_id);
+                // change current?
+            }
+            // Time of the alarm has been changed, remove from periodic display list
+            else if (exists == 2) {
+                
+            }
+            // Message of the alarm has been changed
+            else if (exists == 3) { 
+                printf(
+                    "Display thread %d Starting to Print Changed Message Alarm(%d) at %ld: Time = %d Message = %s\n",
+                    thread->thread_id,
+                    current->alarm_id,
+                    time(NULL),
+                    current->time,
+                    current->message);
+                current = current->next;
+            }
+            else {
+                printf("Periodic display thread could not get alarm request.\n");
+            }
+
         }
 
         sem_wait(&reader_count_sem);
@@ -1311,4 +1357,3 @@ int main() {
         DEBUG_PRINT_ALARM_LIST(&alarm_list_header);
     }
 }
-
