@@ -14,6 +14,43 @@
 #define CONSUMER_THREAD_ID 3
 #define PERIODIC_DISPLAY_THREAD_START_ID 4
 
+
+/**
+ * Make a copy of an alarm request.
+ *
+ * Note that the alarm request that is returned is malloced, so it must be freed
+ * later.
+ *
+ * This function is useful because we may need to delete alarm requests in the
+ * alarm list while the consumer thread still needs references to those alarm
+ * requests.
+ */
+alarm_request_t *copy_alarm_request(alarm_request_t *alarm_request) {
+    /*
+     * Allocate memory for the copy of the alarm request
+     */
+    alarm_request_t *alarm_request_copy = malloc(sizeof(alarm_request_t));
+    if (alarm_request_copy == NULL) {
+        errno_abort("Malloc failed");
+    }
+
+    /*
+     * Fill in data
+     */
+    alarm_request_copy->alarm_id = alarm_request->alarm_id;
+    alarm_request_copy->type = alarm_request->type;
+    alarm_request_copy->time = alarm_request->time;
+    strncpy(
+        alarm_request_copy->message,
+        alarm_request->message,
+        strlen(alarm_request->message)
+    );
+    alarm_request_copy->creation_time = alarm_request->creation_time;
+    alarm_request_copy->next = NULL;
+
+    return alarm_request_copy;
+}
+
 /*******************************************************************************
  *      HELPER FUNCTIONS FOR MODIFYING LISTS (USED BY DIFFERENT THREADS)       *
  ******************************************************************************/
@@ -235,14 +272,15 @@ void *periodic_display_thread_routine(void *arg) {
     int targetTime = thread->time;
 
     alarm_request_t *thread_node;
-    alarm_request_t *thread_prev;
+    alarm_request_t *copy;
 
     int exists;
 
     while(1) {
         sleep(targetTime);
+
         thread_node = alarm_display_list_header.next;
-        thread_prev = &alarm_display_list_header;
+
         sem_wait(&reader_count_sem);
         reader_count += 1;
         if (reader_count == 1) {
@@ -255,18 +293,19 @@ void *periodic_display_thread_routine(void *arg) {
             if (thread_node->time == targetTime) {
                 // List is empty, insert at head
                 if (periodic_display_list_header.next == NULL) {
-                    periodic_display_list_header.next = thread_node;
+                    copy = copy_alarm_request(thread_node);
+                    copy->next = NULL;
+                    periodic_display_list_header.next = copy;
                 }
                 else {
-                    current_node->next = thread_node;
-                    thread_node->next = next_node;
+                    copy = copy_alarm_request(thread_node);
+                    copy->next = periodic_display_list_header.next;
+                    periodic_display_list_header.next = copy;
                 }
                 thread_node = thread_node->next;
-                thread_prev = thread_prev->next;
             }
             else {
                 thread_node = thread_node->next;
-                thread_prev = thread_prev->next;
             }
         }
 
@@ -946,42 +985,6 @@ void create_periodic_display_thread(alarm_request_t *alarm_request) {
         alarm_request->time,
         alarm_request->message
     );
-}
-
-/**
- * Make a copy of an alarm request.
- *
- * Note that the alarm request that is returned is malloced, so it must be freed
- * later.
- *
- * This function is useful because we may need to delete alarm requests in the
- * alarm list while the consumer thread still needs references to those alarm
- * requests.
- */
-alarm_request_t *copy_alarm_request(alarm_request_t *alarm_request) {
-    /*
-     * Allocate memory for the copy of the alarm request
-     */
-    alarm_request_t *alarm_request_copy = malloc(sizeof(alarm_request_t));
-    if (alarm_request_copy == NULL) {
-        errno_abort("Malloc failed");
-    }
-
-    /*
-     * Fill in data
-     */
-    alarm_request_copy->alarm_id = alarm_request->alarm_id;
-    alarm_request_copy->type = alarm_request->type;
-    alarm_request_copy->time = alarm_request->time;
-    strncpy(
-        alarm_request_copy->message,
-        alarm_request->message,
-        strlen(alarm_request->message)
-    );
-    alarm_request_copy->creation_time = alarm_request->creation_time;
-    alarm_request_copy->next = NULL;
-
-    return alarm_request_copy;
 }
 
 void handle_alarm_list_update() {
