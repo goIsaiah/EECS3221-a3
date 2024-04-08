@@ -15,7 +15,7 @@ Compiling and Running
 1. First, copy the files "New_Alarm_Cond.c", "debug.h", and "errors.h", 
    "Makefile", and "types.h" into your own directory.
 
-2. To compile the program "New_Alarm_Mutex.c", simply type "make" in your
+2. To compile the program "New_Alarm_Cond.c", simply type "make" in your
    terminal.
 
 3. Type "a.out" to run the executable code.  On some computers, you may need
