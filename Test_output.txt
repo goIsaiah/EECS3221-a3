@@ -3,7 +3,8 @@ NOTE: The messages printed to display the alarms after 5 seconds have been delet
 
 ========================================================================================================================
 Start_Alarm Test 1:
-This test will demonstrate how different threads were created for alarms with different times.
+This test will demonstrate how different threads were created for alarms with different times.  Alarm 1 which has
+Time = 10 is added to Display Thread 4, while Alarm 2 which has Time = 15 is added to Display Thread 5.
 
 Alarm > Start_Alarm(1): 10 message1
 Main Thread has Inserted Alarm_Request_Type Start_Alarm Request(1) at 1712576797: Time = 10 Message = message1 into Alarm List
@@ -25,7 +26,8 @@ ALARM MESSAGE (1) PRINTED BY ALARM DISPLAY THREAD 4 at 1712576827: TIME = 10 MES
 ALARM MESSAGE (2) PRINTED BY ALARM DISPLAY THREAD 5 at 1712576829: TIME = 15 MESSAGE = message2
 
 Start_Alarm Test 2:
-This test will demonstrate how alarms with the same time are added to the same thread.
+This test will demonstrate how alarms with the same time are added to the same thread.  Both Alarms 1 and 2 are added to
+Display Thread 4 because they both have the same Time = 10.
 
 Alarm > Start_Alarm(1): 10 message1
 Main Thread has Inserted Alarm_Request_Type Start_Alarm Request(1) at 1712576935: Time = 10 Message = message1 into Alarm List
@@ -42,4 +44,86 @@ Consumer Thread has Inserted Alarm_Request_Type Start_Alarm Request(2) at 171257
 []
 ALARM MESSAGE (2) PRINTED BY ALARM DISPLAY THREAD 4 at 1712576945: TIME = 10 MESSAGE = message2
 ALARM MESSAGE (1) PRINTED BY ALARM DISPLAY THREAD 4 at 1712576945: TIME = 10 MESSAGE = message1
+
 ========================================================================================================================
+
+Cancel_Alarm Test:
+This test demonstrates how cancelling an alarm will stop printing it.  Furthermore, if all of the alarms in a thread
+(alarms that all share the same Time value) are cancelled, the thread will exit.
+
+Alarm > Start_Alarm(1): 10 message
+Main Thread has Inserted Alarm_Request_Type Start_Alarm Request(1) at 1712577690: Time = 10 Message = message into Alarm List
+Alarm > Alarm Thread Created New Periodic display thread 4 For Alarm(1) at 1712577690: For New Time Value = 10 Message = message
+[{AlarmId: 1, Type: Start_Alarm, Time: 10, Message: message}]
+Consumer Thread has Retrieved Alarm_Request_Type Start_Alarm Request(1) at 1712577690: Time = 10 Message = message from Circular_Buffer Index: 0
+Consumer Thread has Inserted Alarm_Request_Type Start_Alarm Request(1) at 1712577690: Time = 10 Message = message into Alarm Display List.
+[]
+ALARM MESSAGE (1) PRINTED BY ALARM DISPLAY THREAD 4 at 1712577700: TIME = 10 MESSAGE = message
+Cancel_Alarm(1)
+Main Thread has Inserted Alarm_Request_Type Cancel_Alarm Request(1) at 1712577705: Time = 10 Message = message into Alarm List
+Alarm > Alarm Thread 0 Has Cancelled and Removed All Alarm Requests With Alarm ID 1 from Alarm List at 1712577705
+[]
+Consumer Thread has Retrieved Alarm_Request_Type Cancel_Alarm Request(1) at 1712577705: Time = 10 Message = message from Circular_Buffer Index: 1
+Consumer Thread 3 Has Cancelled and Removed All Alarm Requests With Alarm ID (1) from Alarm Display List at 1712577705.
+[]
+Display thread 4 Has Stopped Printing Message of Alarm(1) at 1712577710: Time = 10 Message = message
+No More Alarms With Time = 10 Display Thread 4 exiting at 1712577710
+
+========================================================================================================================
+
+Change_Alarm Test 1:
+This test will demonstrate how changing the message of an alarm will cause the thread to start printing the new message.
+
+Alarm > Start_Alarm(1): 15 initial message
+Main Thread has Inserted Alarm_Request_Type Start_Alarm Request(1) at 1712578116: Time = 15 Message = initial message into Alarm List
+Alarm > Alarm Thread Created New Periodic display thread 4 For Alarm(1) at 1712578116: For New Time Value = 15 Message = initial message
+[{AlarmId: 1, Type: Start_Alarm, Time: 15, Message: initial message}]
+Consumer Thread has Retrieved Alarm_Request_Type Start_Alarm Request(1) at 1712578116: Time = 15 Message = initial message from Circular_Buffer Index: 0
+Consumer Thread has Inserted Alarm_Request_Type Start_Alarm Request(1) at 1712578116: Time = 15 Message = initial message into Alarm Display List.
+[]
+ALARM MESSAGE (1) PRINTED BY ALARM DISPLAY THREAD 4 at 1712578131: TIME = 15 MESSAGE = initial message
+Change_Alarm(1): 15 changed message
+Main Thread has Inserted Alarm_Request_Type Change_Alarm Request(1) at 1712578140: Time = 15 Message = changed message into Alarm List
+Alarm > Alarm Thread 0 at 1712578140 Has Removed All Alarm Requests With Alarm ID 1 From Alarm List Except The Most Recent Change Alarm Request(1) Time = 15 Message = changed message
+[{AlarmId: 1, Type: Change_Alarm, Time: 15, Message: changed message}]
+Consumer Thread has Retrieved Alarm_Request_Type Change_Alarm Request(1) at 1712578140: Time = 15 Message = changed message from Circular_Buffer Index: 1
+Consumer Thread 3 at 1712578140 has Removed All Previous Alarm Requests With Alarm ID 1 From Alarm Display List and Has Inserted Retrieved Change Alarm Request(1) Time = 15 Message = changed message into Alarm Display List.
+[]
+Display thread 4 Starting to Print Changed Message Alarm(1) at 1712578146: Time = 15 Message = changed message
+ALARM MESSAGE (1) PRINTED BY ALARM DISPLAY THREAD 4 at 1712578161: TIME = 15 MESSAGE = changed message
+
+Change_Alarm Test 2:
+This test will demonstrate how changing the time of an alarm will cause a different thread to start printing it.  Display
+Thread 4 has all the alarms with Time = 15 and Display Thread 5 has all the alarms with Time = 20.  When Alarm 1 is
+changed to have its Time set to 20, it is removed from Display Thread 4, and added to Display Thread 5.
+
+Alarm > Start_Alarm(1): 15 message
+Main Thread has Inserted Alarm_Request_Type Start_Alarm Request(1) at 1712578538: Time = 15 Message = message into Alarm List
+Alarm > Alarm Thread Created New Periodic display thread 4 For Alarm(1) at 1712578538: For New Time Value = 15 Message = message
+[{AlarmId: 1, Type: Start_Alarm, Time: 15, Message: message}]
+Consumer Thread has Retrieved Alarm_Request_Type Start_Alarm Request(1) at 1712578538: Time = 15 Message = message from Circular_Buffer Index: 0
+Consumer Thread has Inserted Alarm_Request_Type Start_Alarm Request(1) at 1712578538: Time = 15 Message = message into Alarm Display List.
+[]
+Start_Alarm(2): 20 message2
+Main Thread has Inserted Alarm_Request_Type Start_Alarm Request(2) at 1712578548: Time = 20 Message = message2 into Alarm List
+Alarm > Alarm Thread Created New Periodic display thread 5 For Alarm(2) at 1712578548: For New Time Value = 20 Message = message2
+[{AlarmId: 1, Type: Start_Alarm, Time: 15, Message: message}, {AlarmId: 2, Type: Start_Alarm, Time: 20, Message: message2}]
+Consumer Thread has Retrieved Alarm_Request_Type Start_Alarm Request(2) at 1712578548: Time = 20 Message = message2 from Circular_Buffer Index: 1
+Consumer Thread has Inserted Alarm_Request_Type Start_Alarm Request(2) at 1712578548: Time = 20 Message = message2 into Alarm Display List.
+[]
+ALARM MESSAGE (1) PRINTED BY ALARM DISPLAY THREAD 4 at 1712578553: TIME = 15 MESSAGE = message
+ALARM MESSAGE (1) PRINTED BY ALARM DISPLAY THREAD 4 at 1712578568: TIME = 15 MESSAGE = message
+ALARM MESSAGE (2) PRINTED BY ALARM DISPLAY THREAD 5 at 1712578568: TIME = 20 MESSAGE = message2
+Change_Alarm(1): 20 message
+Main Thread has Inserted Alarm_Request_Type Change_Alarm Request(1) at 1712578576: Time = 20 Message = message into Alarm List
+Alarm > Alarm Thread 0 at 1712578576 Has Removed All Alarm Requests With Alarm ID 1 From Alarm List Except The Most Recent Change Alarm Request(1) Time = 20 Message = message
+[{AlarmId: 2, Type: Start_Alarm, Time: 20, Message: message2}, {AlarmId: 1, Type: Change_Alarm, Time: 20, Message: message}]
+Consumer Thread has Retrieved Alarm_Request_Type Change_Alarm Request(1) at 1712578576: Time = 20 Message = message from Circular_Buffer Index: 2
+Consumer Thread 3 at 1712578576 has Removed All Previous Alarm Requests With Alarm ID 1 From Alarm Display List and Has Inserted Retrieved Change Alarm Request(1) Time = 20 Message = message into Alarm Display List.
+[]
+Display thread 4 Has Stopped Printing Message of Alarm(1) at 1712578583: Time = 15 Message = message
+No More Alarms With Time = 15 Display Thread 4 exiting at 1712578583
+Display thread 5 Has Taken Over Printing Message of Alarm(1) at 1712578588: New Changed Time = 20 Message = message
+ALARM MESSAGE (2) PRINTED BY ALARM DISPLAY THREAD 5 at 1712578588: TIME = 20 MESSAGE = message2
+ALARM MESSAGE (1) PRINTED BY ALARM DISPLAY THREAD 5 at 1712578608: TIME = 20 MESSAGE = message
+ALARM MESSAGE (2) PRINTED BY ALARM DISPLAY THREAD 5 at 1712578608: TIME = 20 MESSAGE = message2
