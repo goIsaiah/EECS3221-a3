@@ -212,6 +212,13 @@ sem_t alarm_display_list_sem;
  *               HELPER FUNCTIONS FOR PERIODIC DISPLAY THREAD                  *
  ******************************************************************************/
  
+/**
+ * Returns an integer representing the alarm request.
+ * 0 = Cancel_Alarm
+ * 1 = Start_Alarm
+ * 2 = Change_Alarm but time has been changed
+ * 3 = Change_Alarm but message has been changed
+*/
 int search_alarm_list(int id, alarm_request_t *current) {
     alarm_request_t *thread_node = alarm_display_list_header.next;
     alarm_request_t *thread_prev = &alarm_display_list_header;
@@ -241,9 +248,18 @@ int search_alarm_list(int id, alarm_request_t *current) {
     return(0);
 }
 
+/**
+ * This function is used to revert the change_status of an alarm
+ * back to false.  This is only invoked if Change_Alarm has been
+ * used and the time has been changed.  After the initial print message
+ * for changing the thread has been displayed, this function is called
+ * so that the default periodic display thread message is printed for
+ * every call after.
+*/
 void change_alarm_display_status(int id) {
     alarm_request_t *thread_node = alarm_display_list_header.next;
 
+    // Loop through the alarms, change the status of the specified one
     while(thread_node != NULL) {
         if(thread_node->alarm_id == id) {
             thread_node->change_status = false;
@@ -352,6 +368,10 @@ void *periodic_display_thread_routine(void *arg) {
 
             // Alarm exists, print standard periodic message
             if (request == 1) {
+                /**
+                 * A.3.5.4 New display thread starts to print alarm because
+                 * the time has been changed.
+                */
                 if (current->change_status == true) {
                     printf(
                         "Display thread %d Has Taken Over Printing Message of Alarm(%d) at %ld: New Changed Time = %d Message = %s\n",
@@ -363,6 +383,9 @@ void *periodic_display_thread_routine(void *arg) {
                     current->change_status = false;
                     change_alarm_display_status(current->alarm_id);
                 }
+                /**
+                 * A.3.5.1 Default print message.
+                */
                 else {
                     printf(
                         "ALARM MESSAGE (%d) PRINTED BY ALARM DISPLAY THREAD %d at %ld: TIME = %d MESSAGE = %s\n",
@@ -375,7 +398,10 @@ void *periodic_display_thread_routine(void *arg) {
                 current = current->next;
                 prev = prev->next;
             }
-            // Alarm has been cancelled, remove from periodic display list
+            /**
+             * A.3.5.2 Alarm has been cancelled by Consumer Thread,
+             * periodic display thread stops printing it.
+            */
             else if (request == 0) {
                 printf(
                     "Display thread %d Has Stopped Printing Message of Alarm(%d) at %ld: Time = %d Message = %s\n",
@@ -384,10 +410,14 @@ void *periodic_display_thread_routine(void *arg) {
                     time(NULL),
                     current->time,
                     current->message);
+                // Remove alarm from periodic display list
                 prev->next = current->next;
                 current = current->next;
             }
-            // Time of the alarm has been changed, remove from periodic display list
+            /**
+             * A.3.5.3 Change_Alarm has been invoked and the time has been
+              changed, so the current thread must stop printing it.
+            */
             else if (request == 2) {
                 printf(
                     "Display thread %d Has Stopped Printing Message of Alarm(%d) at %ld: Time = %d Message = %s\n",
@@ -396,10 +426,15 @@ void *periodic_display_thread_routine(void *arg) {
                     time(NULL),
                     current->time,
                     current->message);
+                // Remove alarm from periodic display list
                 prev->next = current->next;
                 current = current->next;
             }
-            // Message of the alarm has been changed
+            /**
+             * A.3.5.5 Change_Alarm has been invoked and the message has
+             * been changed, so the current thread prints that it's printing
+             * a new message.
+            */
             else if (request == 3) { 
                 printf(
                     "Display thread %d Starting to Print Changed Message Alarm(%d) at %ld: Time = %d Message = %s\n",
@@ -411,6 +446,7 @@ void *periodic_display_thread_routine(void *arg) {
                 current = current->next;
                 prev = prev->next;
             }
+            // Error message
             else {
                 printf("Periodic display thread could not get alarm request.\n");
                 current = current->next;
@@ -426,6 +462,9 @@ void *periodic_display_thread_routine(void *arg) {
         }
         sem_post(&reader_count_sem);
 
+        /**
+         * A.3.5.6 Thread is empty, so it terminates.
+        */
         if (periodic_display_list_header.next == NULL) {
             printf(
                 "No More Alarms With Time = %d Display Thread %d exiting at %ld\n",
