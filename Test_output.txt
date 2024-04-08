@@ -1,0 +1,4 @@
+NOTE: The messages printed to display the alarms after 5 seconds have been deleted in some cases
+      to make the output easier to read
+
+========================================================================================================================
