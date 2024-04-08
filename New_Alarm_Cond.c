@@ -47,6 +47,7 @@ alarm_request_t *copy_alarm_request(alarm_request_t *alarm_request) {
     );
     alarm_request_copy->creation_time = alarm_request->creation_time;
     alarm_request_copy->next = NULL;
+    alarm_request_copy->change_status = alarm_request->change_status;
 
     return alarm_request_copy;
 }
@@ -211,7 +212,7 @@ sem_t alarm_display_list_sem;
  *               HELPER FUNCTIONS FOR PERIODIC DISPLAY THREAD                  *
  ******************************************************************************/
  
- int search_alarm_list(int id, alarm_request_t *current) {
+int search_alarm_list(int id, alarm_request_t *current) {
     alarm_request_t *thread_node = alarm_display_list_header.next;
     alarm_request_t *thread_prev = &alarm_display_list_header;
 
@@ -219,10 +220,10 @@ sem_t alarm_display_list_sem;
         if (thread_node->alarm_id == id) {
             if (thread_node->time != current->time) {
                 // Time has been changed
-                thread_node->change_status = true;
+                current->change_status = true;
                 return(2);
             }
-            else if (thread_node->message != current->message) {
+            else if (strcmp(thread_node->message, current->message)) {
                 // Message has been changed
                 return(3);
             }
@@ -237,9 +238,9 @@ sem_t alarm_display_list_sem;
 
     // Alarm doesn't exist, has been cancelled
     return(0);
- }
+}
 
- void change_alarm_display_status(int id) {
+void change_alarm_display_status(int id) {
     alarm_request_t *thread_node = alarm_display_list_header.next;
 
     while(thread_node != NULL) {
@@ -251,7 +252,34 @@ sem_t alarm_display_list_sem;
             thread_node = thread_node->next;
         }
     }
- }
+}
+
+/**
+ * Returns true if the given alarm should be added to the given list.
+ */
+bool should_add_to_list(alarm_request_t *list_header, alarm_request_t *alarm_request) {
+    alarm_request_t *current = list_header->next;
+
+    if (alarm_request->type == Start_Alarm){
+        while (current != NULL) {
+            if (current->alarm_id == alarm_request->alarm_id) {
+                return false;
+            }
+            current = current->next;
+        }
+        return true;
+    } else if (alarm_request->type == Change_Alarm) {
+        while (current != NULL) {
+            if (current->alarm_id == alarm_request->alarm_id) {
+                return false;
+            }
+            current = current->next;
+        }
+        return true;
+    } else {
+        return false;
+    }
+}
 
 /*******************************************************************************
  *                           PERIODIC DISPLAY THREAD                           *
@@ -261,7 +289,8 @@ sem_t alarm_display_list_sem;
  * A.3.5. Periodic display thread.
  */
 void *periodic_display_thread_routine(void *arg) {
-    periodic_display_thread_t *thread = ((periodic_display_thread_t*) arg);
+    int thread_id  = ((periodic_display_thread_t*) arg)->thread_id;
+    int targetTime = ((periodic_display_thread_t*) arg)->time;
 
     DEBUG_PRINTF("Periodic display thread %d running.\n", thread->thread_id);
 
@@ -269,7 +298,6 @@ void *periodic_display_thread_routine(void *arg) {
     alarm_request_t periodic_display_list_header = {0};
     alarm_request_t *current_node = &periodic_display_list_header;
     alarm_request_t *next_node = periodic_display_list_header.next;
-    int targetTime = thread->time;
 
     alarm_request_t *thread_node;
     alarm_request_t *copy;
@@ -291,16 +319,18 @@ void *periodic_display_thread_routine(void *arg) {
         // Loop through alarm list, add any with the specified time
         while(thread_node != NULL) {
             if (thread_node->time == targetTime) {
-                // List is empty, insert at head
-                if (periodic_display_list_header.next == NULL) {
-                    copy = copy_alarm_request(thread_node);
-                    copy->next = NULL;
-                    periodic_display_list_header.next = copy;
-                }
-                else {
-                    copy = copy_alarm_request(thread_node);
-                    copy->next = periodic_display_list_header.next;
-                    periodic_display_list_header.next = copy;
+                if (should_add_to_list(&periodic_display_list_header, thread_node) == true) {
+                    // List is empty, insert at head
+                    if (periodic_display_list_header.next == NULL) {
+                        copy = copy_alarm_request(thread_node);
+                        copy->next = NULL;
+                        periodic_display_list_header.next = copy;
+                    }
+                    else {
+                        copy = copy_alarm_request(thread_node);
+                        copy->next = periodic_display_list_header.next;
+                        periodic_display_list_header.next = copy;
+                    }
                 }
                 thread_node = thread_node->next;
             }
@@ -324,7 +354,7 @@ void *periodic_display_thread_routine(void *arg) {
                 if (current->change_status == true) {
                     printf(
                         "Display thread %d Has Taken Over Printing Message of Alarm(%d) at %ld: New Changed Time = %d Message = %s\n",
-                        thread->thread_id,
+                        thread_id,
                         current->alarm_id,
                         time(NULL),
                         current->time,
@@ -336,7 +366,7 @@ void *periodic_display_thread_routine(void *arg) {
                     printf(
                         "ALARM MESSAGE (%d) PRINTED BY ALARM DISPLAY THREAD %d at %ld: TIME = %d MESSAGE = %s\n",
                         current->alarm_id,
-                        thread->thread_id,
+                        thread_id,
                         time(NULL),
                         current->time,
                         current->message);
@@ -348,7 +378,7 @@ void *periodic_display_thread_routine(void *arg) {
             else if (exists == 0) {
                 printf(
                     "Display thread %d Has Stopped Printing Message of Alarm(%d) at %ld: Time = %d Message = %s\n",
-                    thread->thread_id,
+                    thread_id,
                     current->alarm_id,
                     time(NULL),
                     current->time,
@@ -360,7 +390,7 @@ void *periodic_display_thread_routine(void *arg) {
             else if (exists == 2) {
                 printf(
                     "Display thread %d Has Stopped Printing Message of Alarm(%d) at %ld: Time = %d Message = %s\n",
-                    thread->thread_id,
+                    thread_id,
                     current->alarm_id,
                     time(NULL),
                     current->time,
@@ -372,7 +402,7 @@ void *periodic_display_thread_routine(void *arg) {
             else if (exists == 3) { 
                 printf(
                     "Display thread %d Starting to Print Changed Message Alarm(%d) at %ld: Time = %d Message = %s\n",
-                    thread->thread_id,
+                    thread_id,
                     current->alarm_id,
                     time(NULL),
                     current->time,
@@ -394,6 +424,11 @@ void *periodic_display_thread_routine(void *arg) {
             sem_post(&alarm_display_list_sem);
         }
         sem_post(&reader_count_sem);
+
+        if (periodic_display_list_header.next == NULL) {
+            printf("Thread %d saying goodbye :)\n", thread_id);
+            break;
+        }
     }
 
 
@@ -922,9 +957,6 @@ void remove_thread_from_list(int time) {
             thread_temp = thread_node;
             thread_node = thread_node->next;
             free(thread_temp);
-
-            // Decrement number of periodic display threads
-            number_of_periodic_display_threads--;
 
             /*
              * Don't increment alarm node because it has already been
