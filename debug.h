@@ -30,7 +30,7 @@ static inline void debug_printf(const char *format, ...) {
 #define DEBUG_PRINTF(...) debug_printf(__VA_ARGS__)
 
 static inline void debug_print_start_message() {
-    debug_printf("EECS Assignment 2 Debug Mode\n");
+    debug_printf("EECS Assignment 3 Debug Mode\n");
     debug_printf("============================\n");
     debug_printf("\n");
     debug_printf("Messages in blue (this color) are debug ");
