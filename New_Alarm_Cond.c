@@ -173,23 +173,7 @@ sem_t alarm_display_list_sem;
 /*******************************************************************************
  *               HELPER FUNCTIONS FOR PERIODIC DISPLAY THREAD                  *
  ******************************************************************************/
- alarm_request_t remove_from_periodic_display_list(alarm_request_t* alarm_header, int id) {
-    alarm_t *alarm_node = alarm_header.next;
-    alarm_t *alarm_prev = &alarm_header;
-
-    // Keeps on searching the list until it finds the correct ID
-    while (alarm_node != NULL) {
-        if (alarm_node->alarm_id == id) {
-            alarm_prev->next = alarm_node->next;
-            break; // Exit loop since ID has been found
-        }
-        // If the ID is not found, move to the next node
-        alarm_node = alarm_node->next;
-        alarm_prev = alarm_prev->next;
-    }
-    return alarm_node;
- }
-
+ 
  int search_alarm_list(int id, alarm_request_t *current) {
     alarm_request_t *thread_node = alarm_display_list_header.next;
     alarm_request_t *thread_prev = &alarm_display_list_header;
@@ -198,6 +182,7 @@ sem_t alarm_display_list_sem;
         if (thread_node->alarm_id == id) {
             if (thread_node->time != current->time) {
                 // Time has been changed
+                thread_node->change_status = true;
                 return(2);
             }
             else if (thread_node->message != current->message) {
@@ -215,6 +200,20 @@ sem_t alarm_display_list_sem;
 
     // Alarm doesn't exist, has been cancelled
     return(0);
+ }
+
+ void change_alarm_display_status(int id) {
+    alarm_request_t *thread_node = alarm_display_list_header.next;
+
+    while(thread_node != NULL) {
+        if(thread_node->alarm_id == id) {
+            thread_node->change_status = false;
+            break;
+        }
+        else {
+            thread_node = thread_node->next;
+        }
+    }
  }
 
 /*******************************************************************************
@@ -276,23 +275,38 @@ void *periodic_display_thread_routine(void *arg) {
          * the same Time value every Time seconds.
          */
         alarm_request_t *current = periodic_display_list_header.next;
+        alarm_request_t *prev = &periodic_display_list_header;
         exists = 0;
         while (current != NULL) {
             exists = search_alarm_list(current->alarm_id, current);
 
             // Alarm exists, print standard periodic message
             if (exists == 1) {
-                printf(
-                    "ALARM MESSAGE (%d) PRINTED BY ALARM DISPLAY THREAD %d at %ld: TIME = %d MESSAGE = %s\n",
-                    current->alarm_id,
-                    thread->thread_id,
-                    time(NULL),
-                    current->time,
-                    current->message);
+                if (current->change_status == true) {
+                    printf(
+                        "Display thread %d Has Taken Over Printing Message of Alarm(%d) at %ld: New Changed Time = %d Message = %s\n",
+                        thread->thread_id,
+                        current->alarm_id,
+                        time(NULL),
+                        current->time,
+                        current->message);
+                    current->change_status = false;
+                    change_alarm_display_status(current->alarm_id);
+                }
+                else {
+                    printf(
+                        "ALARM MESSAGE (%d) PRINTED BY ALARM DISPLAY THREAD %d at %ld: TIME = %d MESSAGE = %s\n",
+                        current->alarm_id,
+                        thread->thread_id,
+                        time(NULL),
+                        current->time,
+                        current->message);
+                }
                 current = current->next;
+                prev = prev->next;
             }
             // Alarm has been cancelled, remove from periodic display list
-            if (exists == 0) {
+            else if (exists == 0) {
                 printf(
                     "Display thread %d Has Stopped Printing Message of Alarm(%d) at %ld: Time = %d Message = %s\n",
                     thread->thread_id,
@@ -300,12 +314,20 @@ void *periodic_display_thread_routine(void *arg) {
                     time(NULL),
                     current->time,
                     current->message);
-                periodic_display_list_header = remove_from_periodic_display_list(&periodic_display_list_header, current->alarm_id);
-                // change current?
+                prev->next = current->next;
+                current = current->next;
             }
             // Time of the alarm has been changed, remove from periodic display list
             else if (exists == 2) {
-                
+                printf(
+                    "Display thread %d Has Stopped Printing Message of Alarm(%d) at %ld: Time = %d Message = %s\n",
+                    thread->thread_id,
+                    current->alarm_id,
+                    time(NULL),
+                    current->time,
+                    current->message);
+                prev->next = current->next;
+                current = current->next;
             }
             // Message of the alarm has been changed
             else if (exists == 3) { 
@@ -317,9 +339,12 @@ void *periodic_display_thread_routine(void *arg) {
                     current->time,
                     current->message);
                 current = current->next;
+                prev = prev->next;
             }
             else {
                 printf("Periodic display thread could not get alarm request.\n");
+                current = current->next;
+                prev = prev->next;
             }
 
         }

@@ -21,6 +21,7 @@ typedef struct alarm_request_t {
     char message[128];
     time_t creation_time;
     struct alarm_request_t *next;
+    bool change_status;
 } alarm_request_t;
 
 /**

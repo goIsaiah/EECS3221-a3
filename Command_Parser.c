@@ -147,6 +147,13 @@ alarm_request_t *parse_request(char input[]) {
             // Get the type from the regex that succeeded
             alarm_request->type = regexes[i].type;
 
+            if (alarm_request->type == Change_Alarm) {
+                alarm_request->change_status = true;
+            }
+            else {
+                alarm_request->change_status = false;
+            }
+
             // Get the alarm_id from the input (if it exists)
             if (regexes[i].expected_matches > 1) {
                 strncpy(
