@@ -225,6 +225,7 @@ int search_alarm_list(int id, alarm_request_t *current) {
             }
             else if (strcmp(thread_node->message, current->message)) {
                 // Message has been changed
+                strcpy(current->message, thread_node->message);
                 return(3);
             }
             // Alarm exists, nothing changed
@@ -302,7 +303,7 @@ void *periodic_display_thread_routine(void *arg) {
     alarm_request_t *thread_node;
     alarm_request_t *copy;
 
-    int exists;
+    int request;
 
     while(1) {
         sleep(targetTime);
@@ -345,12 +346,12 @@ void *periodic_display_thread_routine(void *arg) {
          */
         alarm_request_t *current = periodic_display_list_header.next;
         alarm_request_t *prev = &periodic_display_list_header;
-        exists = 0;
+        request = 0;
         while (current != NULL) {
-            exists = search_alarm_list(current->alarm_id, current);
+            request = search_alarm_list(current->alarm_id, current);
 
             // Alarm exists, print standard periodic message
-            if (exists == 1) {
+            if (request == 1) {
                 if (current->change_status == true) {
                     printf(
                         "Display thread %d Has Taken Over Printing Message of Alarm(%d) at %ld: New Changed Time = %d Message = %s\n",
@@ -375,7 +376,7 @@ void *periodic_display_thread_routine(void *arg) {
                 prev = prev->next;
             }
             // Alarm has been cancelled, remove from periodic display list
-            else if (exists == 0) {
+            else if (request == 0) {
                 printf(
                     "Display thread %d Has Stopped Printing Message of Alarm(%d) at %ld: Time = %d Message = %s\n",
                     thread_id,
@@ -387,7 +388,7 @@ void *periodic_display_thread_routine(void *arg) {
                 current = current->next;
             }
             // Time of the alarm has been changed, remove from periodic display list
-            else if (exists == 2) {
+            else if (request == 2) {
                 printf(
                     "Display thread %d Has Stopped Printing Message of Alarm(%d) at %ld: Time = %d Message = %s\n",
                     thread_id,
@@ -399,7 +400,7 @@ void *periodic_display_thread_routine(void *arg) {
                 current = current->next;
             }
             // Message of the alarm has been changed
-            else if (exists == 3) { 
+            else if (request == 3) { 
                 printf(
                     "Display thread %d Starting to Print Changed Message Alarm(%d) at %ld: Time = %d Message = %s\n",
                     thread_id,
@@ -426,7 +427,11 @@ void *periodic_display_thread_routine(void *arg) {
         sem_post(&reader_count_sem);
 
         if (periodic_display_list_header.next == NULL) {
-            printf("Thread %d saying goodbye :)\n", thread_id);
+            printf(
+                "No More Alarms With Time = %d Display Thread %d exiting at %ld\n",
+                targetTime,
+                thread_id,
+                time(NULL));
             break;
         }
     }
@@ -641,7 +646,7 @@ void consume_alarm_request(alarm_request_t *alarm_request) {
              */
             printf(
                 "Consumer Thread %d at %ld has Removed All Previous Alarm "
-                "Requests With Alarm ID %d From Alarm Display List and Has"
+                "Requests With Alarm ID %d From Alarm Display List and Has "
                 "Inserted Retrieved Change Alarm Request(%d) Time = %d "
                 "Message = %s into Alarm Display List.\n",
                 CONSUMER_THREAD_ID,
