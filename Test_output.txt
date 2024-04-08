@@ -2,3 +2,44 @@ NOTE: The messages printed to display the alarms after 5 seconds have been delet
       to make the output easier to read
 
 ========================================================================================================================
+Start_Alarm Test 1:
+This test will demonstrate how different threads were created for alarms with different times.
+
+Alarm > Start_Alarm(1): 10 message1
+Main Thread has Inserted Alarm_Request_Type Start_Alarm Request(1) at 1712576797: Time = 10 Message = message1 into Alarm List
+Alarm > Alarm Thread Created New Periodic display thread 4 For Alarm(1) at 1712576797: For New Time Value = 10 Message = message1
+[{AlarmId: 1, Type: Start_Alarm, Time: 10, Message: message1}]
+Consumer Thread has Retrieved Alarm_Request_Type Start_Alarm Request(1) at 1712576797: Time = 10 Message = message1 from Circular_Buffer Index: 0
+Consumer Thread has Inserted Alarm_Request_Type Start_Alarm Request(1) at 1712576797: Time = 10 Message = message1 into Alarm Display List.
+[]
+ALARM MESSAGE (1) PRINTED BY ALARM DISPLAY THREAD 4 at 1712576807: TIME = 10 MESSAGE = message1
+Start_Alarm(2): 15 message2
+Main Thread has Inserted Alarm_Request_Type Start_Alarm Request(2) at 1712576814: Time = 15 Message = message2 into Alarm List
+Alarm > Alarm Thread Created New Periodic display thread 5 For Alarm(2) at 1712576814: For New Time Value = 15 Message = message2
+[{AlarmId: 1, Type: Start_Alarm, Time: 10, Message: message1}, {AlarmId: 2, Type: Start_Alarm, Time: 15, Message: message2}]
+Consumer Thread has Retrieved Alarm_Request_Type Start_Alarm Request(2) at 1712576814: Time = 15 Message = message2 from Circular_Buffer Index: 1
+Consumer Thread has Inserted Alarm_Request_Type Start_Alarm Request(2) at 1712576814: Time = 15 Message = message2 into Alarm Display List.
+[]
+ALARM MESSAGE (1) PRINTED BY ALARM DISPLAY THREAD 4 at 1712576817: TIME = 10 MESSAGE = message1
+ALARM MESSAGE (1) PRINTED BY ALARM DISPLAY THREAD 4 at 1712576827: TIME = 10 MESSAGE = message1
+ALARM MESSAGE (2) PRINTED BY ALARM DISPLAY THREAD 5 at 1712576829: TIME = 15 MESSAGE = message2
+
+Start_Alarm Test 2:
+This test will demonstrate how alarms with the same time are added to the same thread.
+
+Alarm > Start_Alarm(1): 10 message1
+Main Thread has Inserted Alarm_Request_Type Start_Alarm Request(1) at 1712576935: Time = 10 Message = message1 into Alarm List
+Alarm > Alarm Thread Created New Periodic display thread 4 For Alarm(1) at 1712576935: For New Time Value = 10 Message = message1
+[{AlarmId: 1, Type: Start_Alarm, Time: 10, Message: message1}]
+Consumer Thread has Retrieved Alarm_Request_Type Start_Alarm Request(1) at 1712576935: Time = 10 Message = message1 from Circular_Buffer Index: 0
+Consumer Thread has Inserted Alarm_Request_Type Start_Alarm Request(1) at 1712576935: Time = 10 Message = message1 into Alarm Display List.
+[]
+Start_Alarm(2): 10 message2
+Main Thread has Inserted Alarm_Request_Type Start_Alarm Request(2) at 1712576941: Time = 10 Message = message2 into Alarm List
+Alarm > [{AlarmId: 1, Type: Start_Alarm, Time: 10, Message: message1}, {AlarmId: 2, Type: Start_Alarm, Time: 10, Message: message2}]
+Consumer Thread has Retrieved Alarm_Request_Type Start_Alarm Request(2) at 1712576941: Time = 10 Message = message2 from Circular_Buffer Index: 1
+Consumer Thread has Inserted Alarm_Request_Type Start_Alarm Request(2) at 1712576941: Time = 10 Message = message2 into Alarm Display List.
+[]
+ALARM MESSAGE (2) PRINTED BY ALARM DISPLAY THREAD 4 at 1712576945: TIME = 10 MESSAGE = message2
+ALARM MESSAGE (1) PRINTED BY ALARM DISPLAY THREAD 4 at 1712576945: TIME = 10 MESSAGE = message1
+========================================================================================================================
