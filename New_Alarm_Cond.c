@@ -14,6 +14,44 @@
 #define CONSUMER_THREAD_ID 3
 #define PERIODIC_DISPLAY_THREAD_START_ID 4
 
+
+/**
+ * Make a copy of an alarm request.
+ *
+ * Note that the alarm request that is returned is malloced, so it must be freed
+ * later.
+ *
+ * This function is useful because we may need to delete alarm requests in the
+ * alarm list while the consumer thread still needs references to those alarm
+ * requests.
+ */
+alarm_request_t *copy_alarm_request(alarm_request_t *alarm_request) {
+    /*
+     * Allocate memory for the copy of the alarm request
+     */
+    alarm_request_t *alarm_request_copy = malloc(sizeof(alarm_request_t));
+    if (alarm_request_copy == NULL) {
+        errno_abort("Malloc failed");
+    }
+
+    /*
+     * Fill in data
+     */
+    alarm_request_copy->alarm_id = alarm_request->alarm_id;
+    alarm_request_copy->type = alarm_request->type;
+    alarm_request_copy->time = alarm_request->time;
+    strncpy(
+        alarm_request_copy->message,
+        alarm_request->message,
+        strlen(alarm_request->message)
+    );
+    alarm_request_copy->creation_time = alarm_request->creation_time;
+    alarm_request_copy->next = NULL;
+    alarm_request_copy->change_status = alarm_request->change_status;
+
+    return alarm_request_copy;
+}
+
 /*******************************************************************************
  *      HELPER FUNCTIONS FOR MODIFYING LISTS (USED BY DIFFERENT THREADS)       *
  ******************************************************************************/
@@ -171,6 +209,80 @@ sem_t reader_count_sem;
 sem_t alarm_display_list_sem;
 
 /*******************************************************************************
+ *               HELPER FUNCTIONS FOR PERIODIC DISPLAY THREAD                  *
+ ******************************************************************************/
+ 
+int search_alarm_list(int id, alarm_request_t *current) {
+    alarm_request_t *thread_node = alarm_display_list_header.next;
+    alarm_request_t *thread_prev = &alarm_display_list_header;
+
+    while(thread_node != NULL) {
+        if (thread_node->alarm_id == id) {
+            if (thread_node->time != current->time) {
+                // Time has been changed
+                current->change_status = true;
+                return(2);
+            }
+            else if (strcmp(thread_node->message, current->message)) {
+                // Message has been changed
+                strcpy(current->message, thread_node->message);
+                return(3);
+            }
+            // Alarm exists, nothing changed
+            return(1);
+        }
+        else {
+            thread_node = thread_node->next;
+            thread_prev = thread_prev->next;
+        }
+    }
+
+    // Alarm doesn't exist, has been cancelled
+    return(0);
+}
+
+void change_alarm_display_status(int id) {
+    alarm_request_t *thread_node = alarm_display_list_header.next;
+
+    while(thread_node != NULL) {
+        if(thread_node->alarm_id == id) {
+            thread_node->change_status = false;
+            break;
+        }
+        else {
+            thread_node = thread_node->next;
+        }
+    }
+}
+
+/**
+ * Returns true if the given alarm should be added to the given list.
+ */
+bool should_add_to_list(alarm_request_t *list_header, alarm_request_t *alarm_request) {
+    alarm_request_t *current = list_header->next;
+
+    if (alarm_request->type == Start_Alarm){
+        while (current != NULL) {
+            if (current->alarm_id == alarm_request->alarm_id) {
+                return false;
+            }
+            current = current->next;
+        }
+        return true;
+    } else if (alarm_request->type == Change_Alarm) {
+        while (current != NULL) {
+            if (current->alarm_id == alarm_request->alarm_id) {
+                return false;
+            }
+            current = current->next;
+        }
+        return true;
+    } else {
+        return false;
+    }
+}
+
+/*******************************************************************************
  *                           PERIODIC DISPLAY THREAD                           *
  ******************************************************************************/
 
@@ -178,9 +290,152 @@ sem_t alarm_display_list_sem;
  * A.3.5. Periodic display thread.
  */
 void *periodic_display_thread_routine(void *arg) {
-    periodic_display_thread_t *thread = ((periodic_display_thread_t*) arg);
+    int thread_id  = ((periodic_display_thread_t*) arg)->thread_id;
+    int targetTime = ((periodic_display_thread_t*) arg)->time;
 
     DEBUG_PRINTF("Periodic display thread %d running.\n", thread->thread_id);
+
+    // List of alarms for the periodic display thread
+    alarm_request_t periodic_display_list_header = {0};
+    alarm_request_t *current_node = &periodic_display_list_header;
+    alarm_request_t *next_node = periodic_display_list_header.next;
+
+    alarm_request_t *thread_node;
+    alarm_request_t *copy;
+
+    int request;
+
+    while(1) {
+        sleep(targetTime);
+
+        thread_node = alarm_display_list_header.next;
+
+        sem_wait(&reader_count_sem);
+        reader_count += 1;
+        if (reader_count == 1) {
+            sem_wait(&alarm_display_list_sem);
+        }
+        sem_post(&reader_count_sem);
+
+        // Loop through alarm list, add any with the specified time
+        while(thread_node != NULL) {
+            if (thread_node->time == targetTime) {
+                if (should_add_to_list(&periodic_display_list_header, thread_node) == true) {
+                    // List is empty, insert at head
+                    if (periodic_display_list_header.next == NULL) {
+                        copy = copy_alarm_request(thread_node);
+                        copy->next = NULL;
+                        periodic_display_list_header.next = copy;
+                    }
+                    else {
+                        copy = copy_alarm_request(thread_node);
+                        copy->next = periodic_display_list_header.next;
+                        periodic_display_list_header.next = copy;
+                    }
+                }
+                thread_node = thread_node->next;
+            }
+            else {
+                thread_node = thread_node->next;
+            }
+        }
+
+        /**
+         * A.3.5.1 Periodically prints the messages of all the alarms with
+         * the same Time value every Time seconds.
+         */
+        alarm_request_t *current = periodic_display_list_header.next;
+        alarm_request_t *prev = &periodic_display_list_header;
+        request = 0;
+        while (current != NULL) {
+            request = search_alarm_list(current->alarm_id, current);
+
+            // Alarm exists, print standard periodic message
+            if (request == 1) {
+                if (current->change_status == true) {
+                    printf(
+                        "Display thread %d Has Taken Over Printing Message of Alarm(%d) at %ld: New Changed Time = %d Message = %s\n",
+                        thread_id,
+                        current->alarm_id,
+                        time(NULL),
+                        current->time,
+                        current->message);
+                    current->change_status = false;
+                    change_alarm_display_status(current->alarm_id);
+                }
+                else {
+                    printf(
+                        "ALARM MESSAGE (%d) PRINTED BY ALARM DISPLAY THREAD %d at %ld: TIME = %d MESSAGE = %s\n",
+                        current->alarm_id,
+                        thread_id,
+                        time(NULL),
+                        current->time,
+                        current->message);
+                }
+                current = current->next;
+                prev = prev->next;
+            }
+            // Alarm has been cancelled, remove from periodic display list
+            else if (request == 0) {
+                printf(
+                    "Display thread %d Has Stopped Printing Message of Alarm(%d) at %ld: Time = %d Message = %s\n",
+                    thread_id,
+                    current->alarm_id,
+                    time(NULL),
+                    current->time,
+                    current->message);
+                prev->next = current->next;
+                current = current->next;
+            }
+            // Time of the alarm has been changed, remove from periodic display list
+            else if (request == 2) {
+                printf(
+                    "Display thread %d Has Stopped Printing Message of Alarm(%d) at %ld: Time = %d Message = %s\n",
+                    thread_id,
+                    current->alarm_id,
+                    time(NULL),
+                    current->time,
+                    current->message);
+                prev->next = current->next;
+                current = current->next;
+            }
+            // Message of the alarm has been changed
+            else if (request == 3) { 
+                printf(
+                    "Display thread %d Starting to Print Changed Message Alarm(%d) at %ld: Time = %d Message = %s\n",
+                    thread_id,
+                    current->alarm_id,
+                    time(NULL),
+                    current->time,
+                    current->message);
+                current = current->next;
+                prev = prev->next;
+            }
+            else {
+                printf("Periodic display thread could not get alarm request.\n");
+                current = current->next;
+                prev = prev->next;
+            }
+
+        }
+
+        sem_wait(&reader_count_sem);
+        reader_count -= 1;
+        if (reader_count == 0) {
+            sem_post(&alarm_display_list_sem);
+        }
+        sem_post(&reader_count_sem);
+
+        if (periodic_display_list_header.next == NULL) {
+            printf(
+                "No More Alarms With Time = %d Display Thread %d exiting at %ld\n",
+                targetTime,
+                thread_id,
+                time(NULL));
+            break;
+        }
+    }
+
 
     return NULL;
 }
@@ -391,7 +646,7 @@ void consume_alarm_request(alarm_request_t *alarm_request) {
              */
             printf(
                 "Consumer Thread %d at %ld has Removed All Previous Alarm "
-                "Requests With Alarm ID %d From Alarm Display List and Has"
+                "Requests With Alarm ID %d From Alarm Display List and Has "
                 "Inserted Retrieved Change Alarm Request(%d) Time = %d "
                 "Message = %s into Alarm Display List.\n",
                 CONSUMER_THREAD_ID,
@@ -465,7 +720,10 @@ void *consumer_thread_routine(void *arg) {
             (readIndex + (CIRCULAR_BUFFER_SIZE - 1)) % CIRCULAR_BUFFER_SIZE
         );
 
+        sem_wait(&alarm_display_list_sem);
         DEBUG_PRINT_ALARM_REQUEST(alarm_request);
+        consume_alarm_request(alarm_request);
+        sem_post(&alarm_display_list_sem);
 
         /*
          * Lock the circular buffer mutex to ensure mututal exclusion on the
@@ -705,9 +963,6 @@ void remove_thread_from_list(int time) {
             thread_node = thread_node->next;
             free(thread_temp);
 
-            // Decrement number of periodic display threads
-            number_of_periodic_display_threads--;
-
             /*
              * Don't increment alarm node because it has already been
              * incremented during the removal above.
@@ -767,42 +1022,6 @@ void create_periodic_display_thread(alarm_request_t *alarm_request) {
         alarm_request->time,
         alarm_request->message
     );
-}
-
-/**
- * Make a copy of an alarm request.
- *
- * Note that the alarm request that is returned is malloced, so it must be freed
- * later.
- *
- * This function is useful because we may need to delete alarm requests in the
- * alarm list while the consumer thread still needs references to those alarm
- * requests.
- */
-alarm_request_t *copy_alarm_request(alarm_request_t *alarm_request) {
-    /*
-     * Allocate memory for the copy of the alarm request
-     */
-    alarm_request_t *alarm_request_copy = malloc(sizeof(alarm_request_t));
-    if (alarm_request_copy == NULL) {
-        errno_abort("Malloc failed");
-    }
-
-    /*
-     * Fill in data
-     */
-    alarm_request_copy->alarm_id = alarm_request->alarm_id;
-    alarm_request_copy->type = alarm_request->type;
-    alarm_request_copy->time = alarm_request->time;
-    strncpy(
-        alarm_request_copy->message,
-        alarm_request->message,
-        strlen(alarm_request->message)
-    );
-    alarm_request_copy->creation_time = alarm_request->creation_time;
-    alarm_request_copy->next = NULL;
-
-    return alarm_request_copy;
 }
 
 void handle_alarm_list_update() {
@@ -1149,6 +1368,10 @@ int main() {
      */
     sem_init(&circular_buffer_full_sem, 0, 0);
 
+    sem_init(&alarm_display_list_sem, 0, 1);
+
+    sem_init(&reader_count_sem, 0, 1);
+
     /*
      * A.3.2. Create alarm thread.
      */
@@ -1199,4 +1422,3 @@ int main() {
         DEBUG_PRINT_ALARM_LIST(&alarm_list_header);
     }
 }
-
